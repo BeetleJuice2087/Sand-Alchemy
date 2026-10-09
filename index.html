@@ -322,17 +322,19 @@ svg .fill { fill: currentColor; stroke: none; }
 .ai-mode input { margin-top: 3px; accent-color: var(--accent); }
 .ai-mode b { display: block; }
 .ai-mode small { display: block; color: var(--muted); font-size: 0.82rem; line-height: 1.35; }
-.ai-device { display: grid; gap: 8px; margin: 8px 0; }
+.ai-device { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 8px 0; }
 .ai-device[hidden], .ai-adv[hidden], #ai-nogpu[hidden] { display: none; }
-.ai-device select { height: 40px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; padding: 0 10px; }
+.ai-device select { width: 100%; min-width: 0; text-overflow: ellipsis; height: 40px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; padding: 0 10px; }
 .ai-dl-track { height: 8px; border-radius: 99px; background: var(--surface); border: 1px solid var(--line); overflow: hidden; }
 .ai-dl-track span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #9ff0c8, #c88cff); transition: width 0.3s; }
 .ai-device .ghost-btn { height: 40px; }
 .ai-dl-row { gap: 8px; }
-.ai-dl-row .ghost-btn { flex: 1; }
+.ai-dl-row .ghost-btn { flex: 1; min-width: 0; }
 .ai-rm[hidden] { display: none; }
 .ai-rm { color: #ff9d9d; border-color: color-mix(in srgb, #ff6b6b 45%, var(--line)); }
 .ai-dl-row [hidden] { display: none; }
+
+.ai-warn { color: var(--gold); font-size: 0.88rem; margin-top: 6px; }
 
 </style>
 </head>
@@ -406,7 +408,8 @@ svg .fill { fill: currentColor; stroke: none; }
       </div>
       <p class="ai-status" id="ai-nogpu" hidden>This browser can’t run AI on its graphics chip (it needs WebGPU), so only Online is available here.</p>
       <div class="ai-device" id="ai-device" hidden>
-        <select id="ai-model" aria-label="AI model"><option value="small"></option><option value="better"></option></select>
+        <select id="ai-model" aria-label="AI model"><option value="small"></option><option value="middle"></option><option value="better"></option></select>
+        <p class="ai-status ai-warn" id="ai-mem-note" hidden>It needs about 2 GB of memory while it thinks, so it's for computers only, unless your phone or tablet has plenty of memory. On a phone, pick Small and quick or use Online.</p>
         <div class="ai-dl-track"><span id="ai-dl-bar"></span></div>
         <p class="ai-status" id="ai-dl-status"></p>
         <div class="row ai-dl-row"><button class="ghost-btn" id="ai-dl" type="button">Download now</button><button class="ghost-btn ai-rm" id="ai-rm" type="button" hidden>Remove this download</button></div>
@@ -3530,7 +3533,8 @@ svg .fill { fill: currentColor; stroke: none; }
   const WEBLLM_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.85/+esm';
   const LOCAL_MODELS = {
     small: { id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC', label: 'Small and quick', size: 'about 0.7 GB download' },
-    better: { id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', label: 'Smarter', size: 'about 1.8 GB download' },
+    middle: { id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', label: 'In-between', size: 'about 1 GB download' },
+    better: { id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', label: 'Smarter', size: '1.8 GB, for computers' },
   };
   const AIP = (() => {
     const STATES = ['powder', 'liquid', 'gas', 'solid'];
@@ -3625,7 +3629,7 @@ svg .fill { fill: currentColor; stroke: none; }
           if (!local.loading) { clearInterval(tick); return; }
           if (Date.now() - last > 90000) {
             clearInterval(tick); try { thread.terminate(); } catch (e) { /* already gone */ }
-            fail(new Error(aiSettings.model === 'better' ? 'It got stuck. On a phone, try Small and quick (Smarter needs lots of memory), or use Online.' : 'It got stuck. Check your connection and try again, or use Online.'));
+            fail(new Error(aiSettings.model !== 'small' ? 'It got stuck. On a phone, try Small and quick (the bigger ones need lots of memory), or use Online.' : 'It got stuck. Check your connection and try again, or use Online.'));
           }
         }, 5000);
       });
@@ -3695,6 +3699,12 @@ svg .fill { fill: currentColor; stroke: none; }
   }
   async function askAI(a, b) { return aiSettings.mode === 'device' ? askLocal(a, b) : askCloud(a, b); }
 
+  // A memory warning under the model picker for the bigger downloads.
+  const MEM_NOTES = {
+    middle: 'It needs about 1.6 GB of memory while it thinks. It may work on newer phones; if your other apps start closing, use Small and quick or Online.',
+    better: 'It needs about 2 GB of memory while it thinks, so it\u2019s for computers only, unless your phone or tablet has plenty of memory. On a phone, pick Small and quick or use Online.',
+  };
+  function memNote() { const n = $('#ai-mem-note'), t = MEM_NOTES[aiSettings.model]; n.hidden = !t; if (t) n.textContent = t; }
   // The "Cauldron spirit" box in the discovery book.
   function renderAIBox() {
     $('#ai-on').checked = !!aiSettings.on;
@@ -3705,6 +3715,7 @@ svg .fill { fill: currentColor; stroke: none; }
     $('#ai-device').hidden = aiSettings.mode !== 'device';
     $('#ai-cloud').hidden = aiSettings.mode === 'device';
     $('#ai-model').value = aiSettings.model;
+    memNote();
     [...$('#ai-model').options].forEach((o) => { const m = LOCAL_MODELS[o.value]; o.textContent = `${m.label} (${m.size})`; });
     localProgressUI();
     if (aiSettings.mode === 'device' && !local.checked) { local.checked = true; checkCached(); }
@@ -3718,7 +3729,7 @@ svg .fill { fill: currentColor; stroke: none; }
   function saveAI() { try { localStorage.setItem(AI_KEY, JSON.stringify(aiSettings)); } catch (e) { /* ignore */ } renderAIBox(); }
   $('#ai-on').addEventListener('change', (e) => { aiSettings.on = e.target.checked; saveAI(); });
   document.querySelectorAll('input[name="ai-mode"]').forEach((r) => r.addEventListener('change', () => { if (r.checked) { aiSettings.mode = r.value; saveAI(); } }));
-  $('#ai-model').addEventListener('change', (e) => { aiSettings.model = e.target.value; saveAI(); });
+  $('#ai-model').addEventListener('change', (e) => { aiSettings.model = e.target.value; saveAI(); memNote(); });
   $('#ai-rm').addEventListener('click', removeLocal);
   $('#ai-model').addEventListener('change', () => localProgressUI());
   $('#ai-dl').addEventListener('click', () => { loadLocal().then(() => note('The Cauldron spirit is ready on this device!')).catch(() => note('Couldn\u2019t start the AI on this device.')); localProgressUI(); });
@@ -3985,8 +3996,9 @@ svg .fill { fill: currentColor; stroke: none; }
     },
     async decode(code) {
       code = String(code || '').replace(/\s+/g, '');
+      if (/^H4sI[A-Za-z0-9_-]+$/.test(code)) code = 'SAND1.' + code; // only the "SAND1." label went missing
       const m = /^SAND([01])\.([A-Za-z0-9_-]+)$/.exec(code);
-      if (!m) throw new Error('That doesn\u2019t look like a Sand Alchemy backup. Make sure you copied all of it.');
+      if (!m) throw new Error(/^[A-Za-z0-9_-]{40,}$/.test(code) ? 'The start of this backup code is missing (it should begin with SAND1.). Copy it again, or use Save backup file and Open backup file instead.' : 'That doesn\u2019t look like a Sand Alchemy backup. Make sure you copied all of it.');
       let bytes;
       try {
         bytes = this.fromB64(m[2]);
@@ -4014,8 +4026,13 @@ svg .fill { fill: currentColor; stroke: none; }
     const box = $('#backup-code');
     let code; try { code = await Backup.encode(); } catch (e) { note('Could not make a backup on this device.'); return; }
     box.value = code;
-    try { await navigator.clipboard.writeText(code); box.hidden = true; note('Backup code copied. Paste it into Notes or a message to yourself.'); }
-    catch (e) { box.hidden = false; box.focus(); box.select(); note('Copy this code and keep it somewhere safe.'); }
+    const copied = () => { box.hidden = true; note('Backup code copied. Paste it into Notes or a message to yourself.'); };
+    try { if (!navigator.clipboard) throw new Error('none'); await navigator.clipboard.writeText(code); copied(); return; } catch (e) { /* try the old way */ }
+    // Pages opened as a saved file can't use the clipboard API, but the older copy command still works there.
+    box.hidden = false; box.removeAttribute('readonly'); box.focus(); box.select(); box.setSelectionRange(0, code.length);
+    let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    box.setAttribute('readonly', '');
+    if (ok) copied(); else note('Copy ALL of this code (it starts with SAND), or use Save backup file instead.');
   });
   $('#backup-file').addEventListener('click', async () => {
     let code; try { code = await Backup.encode(); } catch (e) { note('Could not make a backup on this device.'); return; }
