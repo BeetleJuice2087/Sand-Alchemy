@@ -343,18 +343,20 @@ svg .fill { fill: currentColor; stroke: none; }
 .ai-warn { color: var(--gold); font-size: 0.88rem; margin-top: 6px; }
 
 /* 3 and 4 ingredient brews: extra slots under the first two, lined up with them. */
-.brew-extra { margin-top: 0; }
-.brew-extra[hidden] { display: none; }
-.brew-extra .slot { height: 80px; }
-.brew-extra-pad { flex: none; width: 84px; }
-.brew-extra .slot-wrap[hidden], .brew-extra .plus[hidden] { display: none; }
-.brew-extra.three #wrap-d, .brew-extra.three #plus-d { visibility: hidden; display: flex; }
-.brew-extra.three #plus-d { display: inline; }
+.slot-grid { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.slot-grid .slot-wrap[hidden] { display: none; }
+.slot-grid.big .slot { height: 76px; }
 .brew-count { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; font-size: 0.8rem; font-weight: 700; color: var(--muted); }
 .brew-count span { margin-right: 4px; }
 .count-btn { min-width: 38px; height: 30px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-weight: 800; cursor: pointer; }
 .count-btn[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: #121329; }
 .chain { display: block; margin-top: 4px; font-size: 0.82rem; color: var(--muted); white-space: pre-line; }
+
+.card.has-del { position: relative; padding-right: 30px; }
+.card-del { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--muted); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.card-del svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; fill: none; }
+.card-del:hover, .card-del:focus-visible { color: #e5484d; border-color: #e5484d; }
+.primary-btn.danger { background: #e5484d; border-color: #e5484d; color: #fff; }
 
 </style>
 </head>
@@ -472,18 +474,31 @@ svg .fill { fill: currentColor; stroke: none; }
       </button>
     </header>
     <div class="brew-bench">
-      <div class="slot-wrap">
-        <button class="slot" id="slot-a" type="button" aria-label="First ingredient"></button>
-        <button class="lock" id="lock-a" type="button" aria-label="Lock the first ingredient" aria-pressed="false" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-        </button>
-      </div>
-      <span class="plus">+</span>
-      <div class="slot-wrap">
-        <button class="slot" id="slot-b" type="button" aria-label="Second ingredient"></button>
-        <button class="lock" id="lock-b" type="button" aria-label="Lock the second ingredient" aria-pressed="false" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-        </button>
+      <div class="slot-grid" id="slot-grid">
+        <div class="slot-wrap">
+          <button class="slot" id="slot-a" type="button" aria-label="First ingredient"></button>
+          <button class="lock" id="lock-a" type="button" aria-label="Lock the first ingredient" aria-pressed="false" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          </button>
+        </div>
+        <div class="slot-wrap">
+          <button class="slot" id="slot-b" type="button" aria-label="Second ingredient"></button>
+          <button class="lock" id="lock-b" type="button" aria-label="Lock the second ingredient" aria-pressed="false" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          </button>
+        </div>
+        <div class="slot-wrap" id="wrap-c" hidden>
+          <button class="slot" id="slot-c" type="button" aria-label="Third ingredient"></button>
+          <button class="lock" id="lock-c" type="button" aria-label="Lock the third ingredient" aria-pressed="false" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          </button>
+        </div>
+        <div class="slot-wrap" id="wrap-d" hidden>
+          <button class="slot" id="slot-d" type="button" aria-label="Fourth ingredient"></button>
+          <button class="lock" id="lock-d" type="button" aria-label="Lock the fourth ingredient" aria-pressed="false" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          </button>
+        </div>
       </div>
       <div class="brew-actions">
         <button class="primary-btn brew-go" id="brew-go" type="button" disabled>Brew</button>
@@ -492,23 +507,6 @@ svg .fill { fill: currentColor; stroke: none; }
           Random
         </button>
       </div>
-    </div>
-    <div class="brew-bench brew-extra" id="brew-extra" hidden>
-      <span class="plus">+</span>
-      <div class="slot-wrap" id="wrap-c">
-        <button class="slot" id="slot-c" type="button" aria-label="Third ingredient"></button>
-        <button class="lock" id="lock-c" type="button" aria-label="Lock the third ingredient" aria-pressed="false" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-        </button>
-      </div>
-      <span class="plus" id="plus-d">+</span>
-      <div class="slot-wrap" id="wrap-d">
-        <button class="slot" id="slot-d" type="button" aria-label="Fourth ingredient"></button>
-        <button class="lock" id="lock-d" type="button" aria-label="Lock the fourth ingredient" aria-pressed="false" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-        </button>
-      </div>
-      <span class="brew-extra-pad" aria-hidden="true"></span>
     </div>
     <div class="brew-count" role="radiogroup" aria-label="How many ingredients">
       <span>Ingredients</span>
@@ -562,6 +560,17 @@ svg .fill { fill: currentColor; stroke: none; }
   </div>
 </div>
 
+<div class="overlay" id="del-confirm" hidden>
+  <div class="sheet small" role="dialog" aria-modal="true" aria-labelledby="del-title">
+    <h2 id="del-title">Delete this invention?</h2>
+    <p class="sheet-lede" id="del-text"></p>
+    <p class="sheet-lede hold-tip">Brewing the same ingredients again may bring it back.</p>
+    <div class="row">
+      <button class="ghost-btn" id="del-no" type="button">Keep it</button>
+      <button class="primary-btn danger" id="del-yes" type="button">Delete</button>
+    </div>
+  </div>
+</div>
 <div class="overlay" id="confirm" hidden>
   <div class="sheet small" role="dialog" aria-modal="true">
     <h2>Clear the world?</h2>
@@ -3565,6 +3574,13 @@ svg .fill { fill: currentColor; stroke: none; }
       const how = (mat.start ? 'Starting element' : brewed(m) ? 'Brew: ' + mat.recipe : mat.recipe) + (mat.also ? ' · ' + mat.also : '');
       s.textContent = found ? how + (mat.desc ? ' · ' + mat.desc : '') : hinted.has(m) ? mat.hint : 'Tap for a hint';
       txt.append(b, s); c.append(sw, txt);
+      if (found && label === 'Inventions') {
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'card-del';
+        x.setAttribute('aria-label', 'Delete ' + mat.name); x.title = 'Delete';
+        x.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg>';
+        x.addEventListener('click', (e) => { e.stopPropagation(); askDelete(m); });
+        c.classList.add('has-del'); c.append(x);
+      }
       if (!found) {
         c.type = 'button';
         c.addEventListener('click', () => { hinted.add(m); c.classList.add('hinted'); s.textContent = mat.hint; writeSaveSoon(); });
@@ -3890,6 +3906,45 @@ svg .fill { fill: currentColor; stroke: none; }
     INV_GROUP.items.sort(byName);
     return id;
   }
+  /* Deleting an invention also deletes anything that was brewed from it,
+     clears it out of the world, then reloads so every list is rebuilt. */
+  function dependents(id) {
+    const gone = new Set([id]);
+    for (let grew = true; grew;) {
+      grew = false;
+      inventions.forEach((r) => {
+        if (gone.has(r.id)) return;
+        if ((Array.isArray(r.parts) ? r.parts : [r.a, r.b]).some((m) => gone.has(m))) { gone.add(r.id); grew = true; }
+      });
+    }
+    return gone;
+  }
+  let pendingDelete = 0;
+  function askDelete(id) {
+    const gone = dependents(id), others = [...gone].filter((m) => m !== id && MATS[m]).map((m) => MATS[m].name);
+    pendingDelete = id;
+    $('#del-title').textContent = 'Delete ' + MATS[id].name + '?';
+    $('#del-text').textContent = 'It will be removed from your book, your toolbar and your world.'
+      + (others.length ? ' These were brewed from it, so they go too: ' + others.join(', ') + '.' : '');
+    $('#del-confirm').hidden = false;
+  }
+  function deleteInvention(id) {
+    const gone = dependents(id);
+    inventions = inventions.filter((r) => !gone.has(r.id));
+    saveInventions();
+    const w = world, n = w.w * w.h;
+    for (let i = 0; i < n; i++) {
+      if (gone.has(w.matAt(i)) || gone.has(w.t[i])) { w.t[i] = 0; w.life[i] = 0; w.fuel[i] = 0; if (w.skin) w.skin[i] = 0; }
+    }
+    w.creatures = w.creatures.filter((c) => !gone.has(c.k) && !gone.has(c.into));
+    gone.forEach((m) => { w.discovered[m] = 0; unseen.delete(m); });
+    if (gone.has(tool)) tool = M.SAND;
+    writeSave();
+    restoring = true; // nothing else may save before the reload
+    location.reload();
+  }
+  $('#del-no').addEventListener('click', () => { $('#del-confirm').hidden = true; pendingDelete = 0; });
+  $('#del-yes').addEventListener('click', () => { const id = pendingDelete; $('#del-confirm').hidden = true; if (id) deleteInvention(id); });
   function saveInventions() { try { localStorage.setItem(INV_KEY, JSON.stringify(inventions)); } catch (e) { /* storage full or blocked */ } }
   function loadInventions(list) {
     if (!Array.isArray(list)) return;
@@ -4231,7 +4286,7 @@ svg .fill { fill: currentColor; stroke: none; }
   }
   function toggleLock(k) { if (!slots[k]) return; locks[k] = !locks[k]; renderSlots(); }
   function renderSlots() {
-    const ex = $('#brew-extra'); ex.hidden = nSlots < 3; ex.classList.toggle('three', nSlots === 3);
+    $('#wrap-c').hidden = nSlots < 3; $('#wrap-d').hidden = nSlots < 4; $('#slot-grid').classList.toggle('big', nSlots > 2);
     document.querySelectorAll('.count-btn').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.n) === nSlots)));
     $('#brew-lede').textContent = nSlots === 2 ? 'Pick two ingredients, then press Brew. Tap a lock to keep one in place.'
       : `Pick ${nSlots === 3 ? 'three' : 'four'} ingredients, then press Brew. Bigger brews can turn out amazing\u2026 or a bit broken!`;
