@@ -2370,12 +2370,13 @@ svg .fill { fill: currentColor; stroke: none; }
         if (c.y < 0) c.y = 0;
         const here = this.cellAt(c.x, c.y), A = ABIL[c.k];
         if (c.k === M.GHOST) { if (here === M.VOID) c.dead = 'void'; else this.ghost(c); continue; } // ghosts pass through everything
-        const proof = A && A.fireproof;
+        const proof = A && A.fireproof, zapper = A && A.zaps;
         // Fire, lava, acid and the like are deadly; so is being buried or frozen solid.
-        if (DEADLY[here] && !(proof && FIERY[here])) { c.dead = 'burn'; continue; }
+        // Creatures that zap are safe in their own lightning.
+        if (DEADLY[here] && !(proof && FIERY[here]) && !(zapper && here === M.LIGHTNING)) { c.dead = 'burn'; continue; }
         if (!(c.f & 3) && c.k !== M.FIREFLY && !proof) { // fireflies are born from embers and dodge flames
           const k = ri(4), nb = this.cellAt(c.x + NX[k * 2 % 8], c.y + NY[k * 2 % 8]);
-          if (HOT[nb] && rnd() < 0.35) { c.dead = 'burn'; continue; }
+          if (HOT[nb] && !(zapper && nb === M.LIGHTNING) && rnd() < 0.35) { c.dead = 'burn'; continue; }
         }
         if (!this.canBe(c.k, here)) {
           // Something fell on it: try to wriggle up out of the way.
@@ -2410,11 +2411,18 @@ svg .fill { fill: currentColor; stroke: none; }
       }
       // Clear out the dead, leaving a puff of smoke where something burned.
       if (list.some((c) => c.dead)) {
+        const booms = [];
         this.creatures = list.filter((c) => {
           if (!c.dead) return true;
+          // Explosive creatures go off when they burn, get blown up, or their fuse runs out.
+          if (ABIL[c.k] && ABIL[c.k].explodes && (c.dead === 'burn' || c.dead === 'boom')) { booms.push(Math.round(c.x), Math.round(c.y) - 1); return false; }
           if (c.dead === 'burn') { const x = Math.round(c.x), y = Math.round(c.y) - 1; if (x >= 0 && y >= 0 && x < this.w && y < this.h && this.t[y * this.w + x] === 0) this.put(y * this.w + x, M.SMOKE); }
           return false;
         });
+        for (let k = 0; k < booms.length; k += 2) {
+          const x = Math.max(0, Math.min(this.w - 1, booms[k])), y = Math.max(0, Math.min(this.h - 1, booms[k + 1]));
+          this.blast(x, y);
+        }
       }
     }
     // Where each creature can be at all (anything else and it is buried).
@@ -2726,6 +2734,40 @@ svg .fill { fill: currentColor; stroke: none; }
     morph(c, k) { c.k = k; c.s = 0; c.t = 30 + ri(60); c.age = 0; c.vx = c.vy = 0; this.discover(k); }
     abilities(c, A, here) {
       const x = Math.round(c.x), y = Math.round(c.y), w = this.w;
+      // Zaps: every so often a short crackling arc of lightning jumps out of it.
+      if (A.zaps) {
+        if (!c.zt) c.zt = 90 + ri(150);
+        if (--c.zt <= 0) {
+          c.zt = 70 + ri(130);
+          for (let arc = 0; arc < 2; arc++) {
+          const ang = c.dir > 0 ? -0.9 + rnd() * 1.6 : Math.PI - 0.7 + rnd() * 1.6; // mostly forwards and up
+          let ax = c.x, ay = c.y - 1;
+          const len = 7 + ri(8);
+          for (let n = 0; n < len; n++) {
+            ax += Math.cos(ang) + (rnd() - 0.5) * 1.2; ay += Math.sin(ang) + (rnd() - 0.5) * 1.2;
+            const bx = Math.round(ax), by = Math.round(ay);
+            if (bx < 0 || by < 0 || bx >= w || by >= this.h) break;
+            const j = by * w + bx, b = this.t[j], kb = KIND[b];
+            if (b === 0 || kb === K.gas || kb === K.fire || kb === K.spark || kb === K.cloud) this.put(j, M.LIGHTNING);
+            else { if (FLAM[b] > 0 && rnd() < 0.5) this.ignite(j); else if (CONDUCT[b]) this.charge(j, bx, by); break; }
+          }
+          }
+          // Anything else close by gets a shock.
+          this.creatures.forEach((o) => {
+            if (o === c || o.dead || o.k === c.k || o.k === M.GHOST || (ABIL[o.k] && (ABIL[o.k].fireproof || ABIL[o.k].zaps))) return;
+            if ((o.x - c.x) ** 2 + (o.y - c.y) ** 2 <= 16) o.dead = 'burn';
+          });
+        }
+      }
+      // Explodes: after a while it starts to fizz, then goes off.
+      if (A.explodes) {
+        if (!c.fuse && c.age > 500 && rnd() < 0.0015) c.fuse = 60;
+        if (c.fuse > 0) {
+          c.fuse--;
+          if (rnd() < 0.5) { const fy = y - 2 - ri(2), fx = x + ri(3) - 1; if (fx >= 0 && fy >= 0 && fx < w && fy < this.h && this.t[fy * w + fx] === 0) this.put(fy * w + fx, M.SPARKLE); }
+          if (c.fuse === 0) c.dead = 'boom';
+        }
+      }
       // Leaves a trail behind it.
       if (A.trail && rnd() < A.trail[1]) {
         const tx = x - c.dir * 2, ty = y; if (tx >= 0 && tx < w && ty >= 0 && ty < this.h && this.t[ty * w + tx] === 0) this.put(ty * w + tx, A.trail[0]);
@@ -3776,6 +3818,8 @@ svg .fill { fill: currentColor; stroke: none; }
     return Object.assign(base, { desc, kind: 'creature', density: 1, creature: true, colors: [cols[0], cols[1]], move: 'egg', traits: 'life',
       pal: { a: cols[0], b: cols[1], c: cols[2], d: cols[3] }, ax: 1, ay: 3, sprite: { walk: [rows, rows] }, abil: {}, hatches: into, layEgg: false });
   }
+  const ZAP_WORDS = /\b(zap|shock|electr|volt|spark|thunder|lightning|static|tesla)/i;
+  const BOOM_WORDS = /\b(explod|explosive|bomb|kaboom|boom|detonat|dynamite|tnt\b|nitro)/i;
   function buildEntry(spec, a, b, parts) {
     if (!spec || typeof spec !== 'object') return null;
     const name = cleanName(spec.name); if (!name) return null;
@@ -3815,7 +3859,11 @@ svg .fill { fill: currentColor; stroke: none; }
       if (has(ab, 'scared_of_fire')) abil.flee = [];
       if (has(ab, 'leaves_trail')) abil.trail = [has(ab, 'breathes_fire') ? M.SMOKE : M.SPARKLE, 0.04];
       if (has(ab, 'fast')) abil.speed = 1.8; else if (has(ab, 'slow')) abil.speed = 0.5;
-      const traits = ['life', move === 'fly' || move === 'flutter' ? 'air' : move === 'swim' || move === 'wade' ? 'wet' : move === 'burrow' ? 'earth' : '', abil.breath ? 'hot' : '', abil.glow ? 'magic' : ''].filter(Boolean).join(' ');
+      // Zapping and exploding, also when the AI only said so in the name or description.
+      const said = name + ' ' + desc;
+      if (has(ab, 'zaps') || ZAP_WORDS.test(said)) abil.zaps = true;
+      if (has(ab, 'explodes') || BOOM_WORDS.test(said)) abil.explodes = true;
+      const traits = ['life', move === 'fly' || move === 'flutter' ? 'air' : move === 'swim' || move === 'wade' ? 'wet' : move === 'burrow' ? 'earth' : '', abil.breath ? 'hot' : '', abil.glow ? 'magic' : '', abil.zaps ? 'metal' : '', abil.explodes ? 'boom' : ''].filter(Boolean).join(' ');
       return Object.assign(base, { kind: 'creature', density: 1, creature: true, colors: [cols[0], cols[1]], move, traits,
         pal: { a: cols[0], b: cols[1], c: cols[2], d: cols[3] }, ax: Math.floor(width / 2), ay: ground ? rows.length - 1 : Math.floor(rows.length / 2),
         sprite: { walk: [rows, frameB] }, abil, layEgg: has(ab, 'lays_eggs') });
@@ -3982,7 +4030,7 @@ svg .fill { fill: currentColor; stroke: none; }
     const STATES = ['powder', 'liquid', 'gas', 'solid'];
     const PROPS = ['glows', 'sticky', 'bouncy', 'flammable', 'explosive', 'evaporates', 'melts', 'freezes', 'grows', 'magnetic', 'conducts', 'hot', 'cold'];
     const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg', 'paddle', 'amphibian'];
-    const ABILITIES = ['breathes_fire', 'glows', 'fireproof', 'grazes', 'lays_eggs', 'eats_bugs', 'eats_fish', 'scared_of_fire', 'leaves_trail', 'fast', 'slow'];
+    const ABILITIES = ['breathes_fire', 'glows', 'fireproof', 'grazes', 'lays_eggs', 'eats_bugs', 'eats_fish', 'scared_of_fire', 'leaves_trail', 'fast', 'slow', 'zaps', 'explodes'];
     // Materials an object can be built from (names must match the game).
     // Built-in elements an invented element can act like.
     const LIKE_NAMES = MATS.filter((m, i) => isBuiltin(i)).filter((m) => m && likeOk(m.id) && !m.hidden).map((m) => m.name);
