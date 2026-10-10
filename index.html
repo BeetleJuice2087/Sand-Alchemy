@@ -4141,23 +4141,58 @@ svg .fill { fill: currentColor; stroke: none; }
     return ids.map((m, k) => { const d = describe(m); return `Ingredient ${k + 1}: ${d.name} (${d.type}${d.about ? ': ' + d.about : ''})`; }).join('\n') +
       (ids.length > 2 ? `\nWhat ONE new thing do all ${ids.length} make together? Blend the ideas of every ingredient.` : '\nWhat new thing do they make together?');
   }
+  // Small models sometimes wrap their JSON in chatter, or run out of room half-way through.
+  // Pull out the first {...} and, if it was cut off, close it up so the finished part still counts.
+  function looseJSON(text) {
+    let s = String(text || '').replace(/```(json)?/gi, '');
+    const a = s.indexOf('{'); if (a < 0) return null;
+    s = s.slice(a);
+    try { return JSON.parse(s.slice(0, s.lastIndexOf('}') + 1)); } catch (e) { /* repair below */ }
+    for (let cut = s.length; cut > 1; cut--) {
+      let t = s.slice(0, cut).replace(/[\s,:]+$/, '');
+      if (/"[^"]*$/.test(t.replace(/\\"/g, '')) && (t.replace(/\\"/g, '').match(/"/g) || []).length % 2) continue; // inside a string
+      const stack = []; let inStr = false;
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (inStr) { if (c === '\\') i++; else if (c === '"') inStr = false; continue; }
+        if (c === '"') inStr = true; else if (c === '{' || c === '[') stack.push(c === '{' ? '}' : ']'); else if (c === '}' || c === ']') stack.pop();
+      }
+      if (inStr) continue;
+      try { const o = JSON.parse(t + stack.reverse().join('')); if (o && typeof o === 'object') return o; } catch (e) { /* cut a bit more */ }
+      if (s.length - cut > 400) break;
+    }
+    return null;
+  }
   async function askLocal(ids) {
     let eng;
     try { eng = await loadLocal(); } catch (e) { return { error: 'gpu' }; }
     const user = brewQuestion(ids);
-    for (let tries = 0; tries < 2; tries++) {
+    // Three ways of asking, from strictest to loosest: some phones' models choke on the strict one.
+    const ways = [
+      { response_format: { type: 'json_object', schema: JSON.stringify(AIP.LOCAL_SCHEMA) } },
+      { response_format: { type: 'json_object' } },
+      {},
+    ];
+    let why = '';
+    for (const way of ways) {
       try {
-        const r = await eng.chat.completions.create({
-          messages: [{ role: 'system', content: AIP.LOCAL_SYSTEM }, { role: 'user', content: user }],
-          response_format: { type: 'json_object', schema: JSON.stringify(AIP.LOCAL_SCHEMA) },
-          temperature: 0.9, max_tokens: 450,
-        });
-        const spec = JSON.parse(r.choices[0].message.content);
-        const nm = normName(spec && spec.name);
-        if (nm && !ids.some((m) => nm === normName(MATS[m].name)) && cleanName(spec.name)) return { spec };
-      } catch (e) { /* try once more */ }
+        try { await eng.resetChat(); } catch (e) { /* older engines */ }
+        const r = await eng.chat.completions.create(Object.assign({
+          messages: [{ role: 'system', content: AIP.LOCAL_SYSTEM }, { role: 'user', content: user + '\nAnswer with one JSON object only.' }],
+          temperature: 0.8, max_tokens: 700,
+        }, way));
+        const text = r && r.choices && r.choices[0] && r.choices[0].message ? r.choices[0].message.content : '';
+        const spec = looseJSON(text);
+        if (!spec) { why = 'its answer wasn’t readable'; continue; }
+        if (typeof spec.name !== 'string' && typeof spec.Name === 'string') spec.name = spec.Name;
+        const nm = normName(spec.name);
+        if (!nm || !cleanName(spec.name)) { why = 'it didn’t give a name'; continue; }
+        if (ids.some((m) => nm === normName(MATS[m].name))) { why = 'it just named one of the ingredients'; continue; }
+        if (!spec.type) spec.type = spec.movement || spec.sprite ? 'creature' : 'element';
+        return { spec };
+      } catch (e) { why = String(e && e.message || e).slice(0, 120); }
     }
-    return { error: 'failed' };
+    return { error: 'failed', why };
   }
   // Progress shown both in the book and in the Cauldron while it wakes up.
   function localProgressUI() {
@@ -4519,8 +4554,8 @@ svg .fill { fill: currentColor; stroke: none; }
     renderSlots();
     brew(true);
     if (!id) {
-      const why = got.error === 'limit' ? 'The Cauldron spirit is resting for today (daily limit reached).' : got.error === 'gpu' ? 'Couldn\u2019t start the AI on this device.'
-        : got.error === 'offline' ? 'Couldn\u2019t reach the Cauldron spirit (offline?).' : got.error === 'oldworker' ? 'Your Worker needs updating to invent 3 or 4 ingredient brews.' : 'The Cauldron spirit couldn\u2019t think of anything this time.';
+      const why = got.error === 'limit' ? 'The Cauldron spirit is resting for today (daily limit reached). It wakes up again at ' + new Date(new Date().setUTCHours(24, 0, 0, 0)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.' : got.error === 'gpu' ? 'Couldn\u2019t start the AI on this device.'
+        : got.error === 'offline' ? 'Couldn\u2019t reach the Cauldron spirit (offline?).' : got.error === 'oldworker' ? 'Your Worker needs updating to invent 3 or 4 ingredient brews.' : 'The Cauldron spirit couldn\u2019t think of anything this time' + (got.why ? ' (' + got.why + ')' : '') + '.';
       const n = document.createElement('p'); n.className = 'ai-note'; n.textContent = why + ' Here\u2019s a normal mix instead.';
       $('#brew-result').append(n);
     }
