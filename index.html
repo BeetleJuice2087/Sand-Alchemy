@@ -357,6 +357,7 @@ svg .fill { fill: currentColor; stroke: none; }
 .card-del svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; fill: none; }
 .card-del:hover, .card-del:focus-visible { color: #e5484d; border-color: #e5484d; }
 .primary-btn.danger { background: #e5484d; border-color: #e5484d; color: #fff; }
+.game-ver { color: var(--muted); font-size: 0.78rem; text-align: center; margin: 10px 0 0; }
 
 </style>
 </head>
@@ -441,6 +442,7 @@ svg .fill { fill: currentColor; stroke: none; }
         <div class="row ai-url-row"><input type="url" id="ai-url" autocomplete="off" spellcheck="false" aria-label="Worker address"><button class="ghost-btn" id="ai-test" type="button">Test</button></div>
       </details>
     </section>
+    <p class="game-ver" id="game-ver">Game version: Oct 10, update 4</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -4168,10 +4170,12 @@ svg .fill { fill: currentColor; stroke: none; }
     try { eng = await loadLocal(); } catch (e) { return { error: 'gpu' }; }
     const user = brewQuestion(ids);
     // Three ways of asking, from strictest to loosest: some phones' models choke on the strict one.
+    // Plain asking first: the strict JSON modes use extra machinery that breaks on some phones
+    // ("Object has already been disposed"), and we can read a plain answer ourselves anyway.
     const ways = [
-      { response_format: { type: 'json_object', schema: JSON.stringify(AIP.LOCAL_SCHEMA) } },
-      { response_format: { type: 'json_object' } },
       {},
+      { response_format: { type: 'json_object' } },
+      { response_format: { type: 'json_object', schema: JSON.stringify(AIP.LOCAL_SCHEMA) } },
     ];
     let why = '', first = '', restarts = 0;
     for (let k = 0; k < ways.length; k++) {
@@ -4200,7 +4204,7 @@ svg .fill { fill: currentColor; stroke: none; }
           try { await local.engine.unload(); } catch (e2) { /* already gone */ }
           local.engine = null; local.model = null;
           try { eng = await loadLocal(); } catch (e2) { return { error: 'gpu' }; }
-          k--; continue;
+          k = -1; ways.length = 1; continue; // start again, plain asking only
         }
       }
     }
