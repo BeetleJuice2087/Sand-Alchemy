@@ -358,6 +358,7 @@ svg .fill { fill: currentColor; stroke: none; }
 .card-del:hover, .card-del:focus-visible { color: #e5484d; border-color: #e5484d; }
 .primary-btn.danger { background: #e5484d; border-color: #e5484d; color: #fff; }
 .game-ver { color: var(--muted); font-size: 0.78rem; text-align: center; margin: 10px 0 0; }
+.ai-log { max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 0.7rem; line-height: 1.35; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px; margin: 8px 0; color: var(--muted); user-select: text; -webkit-user-select: text; }
 
 </style>
 </head>
@@ -437,12 +438,17 @@ svg .fill { fill: currentColor; stroke: none; }
         <p class="ai-status" id="ai-dl-status"></p>
         <div class="row ai-dl-row"><button class="ghost-btn" id="ai-dl" type="button">Download now</button><button class="ghost-btn ai-rm" id="ai-rm" type="button" hidden>Remove this download</button></div>
       </div>
+      <details class="ai-adv ai-debug">
+        <summary>Debug log (on-device AI)</summary>
+        <pre class="ai-log" id="ai-log"></pre>
+        <div class="row"><button class="ghost-btn" id="ai-log-copy" type="button">Copy log</button><button class="ghost-btn" id="ai-log-clear" type="button">Clear</button></div>
+      </details>
       <details class="ai-adv" id="ai-cloud">
         <summary>Worker address</summary>
         <div class="row ai-url-row"><input type="url" id="ai-url" autocomplete="off" spellcheck="false" aria-label="Worker address"><button class="ghost-btn" id="ai-test" type="button">Test</button></div>
       </details>
     </section>
-    <p class="game-ver" id="game-ver">Game version: Oct 10, update 4</p>
+    <p class="game-ver" id="game-ver">Game version: Oct 10, update 5</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -3660,12 +3666,27 @@ svg .fill { fill: currentColor; stroke: none; }
   // Before downloading anything, make sure this device's graphics chip can really run the model.
   // Phones often lack 16-bit maths (shader-f16), so they get the 32-bit build of the same model.
   let gpuInfo = null;
+  /* A debug log for the on-device AI: what the phone's graphics chip reports, each step of starting
+     the model, and every answer or error. Kept between visits, and shown (with Copy) in the book. */
+  const AILOG_KEY = 'sandalchemy.ailog';
+  let aiLogLines = []; try { aiLogLines = JSON.parse(localStorage.getItem(AILOG_KEY) || '[]'); } catch (e) { aiLogLines = []; }
+  function aiLog(msg) {
+    const t = new Date(); const stamp = t.toTimeString().slice(0, 8);
+    aiLogLines.push(stamp + '  ' + String(msg).replace(/\s+/g, ' ').slice(0, 400));
+    if (aiLogLines.length > 120) aiLogLines = aiLogLines.slice(-120);
+    try { localStorage.setItem(AILOG_KEY, JSON.stringify(aiLogLines)); } catch (e) { /* full */ }
+    const pre = document.getElementById('ai-log'); if (pre) { pre.textContent = aiLogLines.join('\n'); pre.scrollTop = pre.scrollHeight; }
+  }
   function gpuCheck() {
     if (!gpuInfo) gpuInfo = (async () => {
       if (!hasGPU()) return { ok: false, why: 'This browser can\u2019t run AI on its graphics chip.' };
       if (!('caches' in window)) return { ok: false, why: 'This browser can\u2019t store the download. Open the game from its web page (like itch.io) instead of a saved file.' };
       const adapter = await Promise.race([navigator.gpu.requestAdapter().catch(() => null), new Promise((r) => setTimeout(() => r(null), 10000))]);
-      if (!adapter) return { ok: false, why: 'This device\u2019s graphics chip isn\u2019t supported. Try Online, or a computer.' };
+      if (!adapter) { aiLog('GPU: no adapter'); return { ok: false, why: 'This device\u2019s graphics chip isn\u2019t supported. Try Online, or a computer.' }; }
+      try {
+        const i = adapter.info || {}, L = adapter.limits || {};
+        aiLog(`GPU: ${i.vendor || '?'} ${i.architecture || ''} ${i.device || ''} ${i.description || ''} | f16 ${adapter.features.has('shader-f16')} | maxBuffer ${Math.round((L.maxBufferSize || 0) / 1048576)}MB | maxStorageBinding ${Math.round((L.maxStorageBufferBindingSize || 0) / 1048576)}MB | memory ${navigator.deviceMemory || '?'}GB | ${navigator.userAgent}`);
+      } catch (e) { aiLog('GPU info error: ' + e.message); }
       return { ok: true, f16: adapter.features.has('shader-f16') };
     })();
     return gpuInfo;
@@ -4115,7 +4136,11 @@ svg .fill { fill: currentColor; stroke: none; }
       if (local.engine) { try { await local.engine.unload(); } catch (e) { /* ignore */ } local.engine = null; }
       const code = `import * as w from '${WEBLLM_URL}'; const h = new w.WebWorkerMLCEngineHandler(); self.onmessage = (m) => h.onmessage(m);`;
       const thread = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })), { type: 'module' });
+      thread.addEventListener('error', (e) => aiLog('Worker thread error: ' + (e.message || e.type)));
+      local.thread = thread;
       local.progress = 0; local.error = '';
+      aiLog('Starting ' + want + (local.cached[want] ? ' (already downloaded)' : ''));
+      let lastLogged = -1;
       // If nothing happens for a while (a phone running out of memory, a dropped connection), give up
       // with a clear message instead of sitting at the same percentage for ever.
       let last = Date.now();
@@ -4129,13 +4154,17 @@ svg .fill { fill: currentColor; stroke: none; }
         }, 5000);
       });
       const eng = await Promise.race([lib.CreateWebWorkerMLCEngine(thread, want, {
-        initProgressCallback: (r) => { last = Date.now(); local.progress = r.progress || 0; local.text = r.text || ''; localProgressUI(); },
+        initProgressCallback: (r) => {
+          last = Date.now(); local.progress = r.progress || 0; local.text = r.text || ''; localProgressUI();
+          const step = Math.floor(local.progress * 4); if (step !== lastLogged) { lastLogged = step; aiLog('Loading ' + Math.round(local.progress * 100) + '%: ' + local.text); }
+        },
       }), watchdog]);
       local.engine = eng; local.model = want; local.cached[want] = true; local.progress = 1;
+      aiLog('Started OK');
       return eng;
     })();
     try { return await local.loading; }
-    catch (e) { local.error = String(e && e.message || e); throw e; }
+    catch (e) { local.error = String(e && e.message || e); aiLog('Start FAILED: ' + local.error + (e && e.stack ? ' | ' + String(e.stack).split('\n').slice(0, 3).join(' | ') : '')); throw e; }
     finally { local.loading = null; localProgressUI(); }
   }
   // The question for the AI: every ingredient on its own line.
@@ -4167,8 +4196,9 @@ svg .fill { fill: currentColor; stroke: none; }
   }
   async function askLocal(ids) {
     let eng;
-    try { eng = await loadLocal(); } catch (e) { return { error: 'gpu' }; }
+    try { eng = await loadLocal(); } catch (e) { return { error: 'gpu', why: local.error }; }
     const user = brewQuestion(ids);
+    aiLog('Brew: ' + ids.map((m) => MATS[m].name).join(' + '));
     // Three ways of asking, from strictest to loosest: some phones' models choke on the strict one.
     // Plain asking first: the strict JSON modes use extra machinery that breaks on some phones
     // ("Object has already been disposed"), and we can read a plain answer ourselves anyway.
@@ -4187,6 +4217,7 @@ svg .fill { fill: currentColor; stroke: none; }
           temperature: 0.8, max_tokens: 700,
         }, way));
         const text = r && r.choices && r.choices[0] && r.choices[0].message ? r.choices[0].message.content : '';
+        aiLog('Asked ' + (way.response_format ? (way.response_format.schema ? 'strict' : 'json') : 'plain') + ', got: ' + String(text).slice(0, 300));
         const spec = looseJSON(text);
         if (!spec) { why = 'its answer wasn’t readable'; continue; }
         if (typeof spec.name !== 'string' && typeof spec.Name === 'string') spec.name = spec.Name;
@@ -4197,13 +4228,16 @@ svg .fill { fill: currentColor; stroke: none; }
         return { spec };
       } catch (e) {
         why = String(e && e.message || e).slice(0, 120); if (!first) first = why;
+        aiLog('Asked ' + (way.response_format ? (way.response_format.schema ? 'strict' : 'json') : 'plain') + ', ERROR: ' + String(e && e.message || e) + (e && e.stack ? ' | ' + String(e.stack).split('\n').slice(0, 3).join(' | ') : ''));
         // The phone shut the AI's graphics connection (switching apps, low memory): start it again from
         // the copy already on the phone (no download) and ask the same way once more.
         if (restarts < 2 && /dispos|device|lost|webgpu|gpu|memory|abort|destroy|null|undefined/i.test(why)) {
           restarts++;
+          aiLog('Restarting the AI');
           try { await local.engine.unload(); } catch (e2) { /* already gone */ }
-          local.engine = null; local.model = null;
-          try { eng = await loadLocal(); } catch (e2) { return { error: 'gpu' }; }
+          try { if (local.thread) local.thread.terminate(); } catch (e2) { /* already gone */ }
+          local.engine = null; local.model = null; local.thread = null;
+          try { eng = await loadLocal(); } catch (e2) { return { error: 'gpu', why: local.error }; }
           k = -1; ways.length = 1; continue; // start again, plain asking only
         }
       }
@@ -4570,7 +4604,7 @@ svg .fill { fill: currentColor; stroke: none; }
     renderSlots();
     brew(true);
     if (!id) {
-      const why = got.error === 'limit' ? 'The Cauldron spirit is resting for today (daily limit reached). It wakes up again at ' + new Date(new Date().setUTCHours(24, 0, 0, 0)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.' : got.error === 'gpu' ? 'Couldn\u2019t start the AI on this device.'
+      const why = got.error === 'limit' ? 'The Cauldron spirit is resting for today (daily limit reached). It wakes up again at ' + new Date(new Date().setUTCHours(24, 0, 0, 0)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.' : got.error === 'gpu' ? 'Couldn\u2019t start the AI on this device' + (got.why ? ' (' + String(got.why).slice(0, 140) + ')' : '') + '. The Debug log in the book has the details.'
         : got.error === 'offline' ? 'Couldn\u2019t reach the Cauldron spirit (offline?).' : got.error === 'oldworker' ? 'Your Worker needs updating to invent 3 or 4 ingredient brews.' : 'The Cauldron spirit couldn\u2019t think of anything this time' + (got.why ? ' (' + got.why + ')' : '') + '.';
       const n = document.createElement('p'); n.className = 'ai-note'; n.textContent = why + ' Here\u2019s a normal mix instead.';
       $('#brew-result').append(n);
@@ -4990,6 +5024,18 @@ svg .fill { fill: currentColor; stroke: none; }
     addEventListener('appinstalled', () => { box.hidden = true; note('Installed! Find Sand Alchemy on your home screen.'); });
   })();
 
+  (function debugLogUI() {
+    const pre = $('#ai-log'); if (!pre) return;
+    pre.textContent = aiLogLines.join('\n') || '(empty: try an on-device brew first)';
+    $('#ai-log-copy').addEventListener('click', async () => {
+      const text = 'Sand Alchemy ' + ($('#game-ver') ? $('#game-ver').textContent : '') + '\n' + aiLogLines.join('\n');
+      let ok = false;
+      try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { /* fall back */ }
+      if (!ok) { const ta = document.createElement('textarea'); ta.value = text; document.body.append(ta); ta.select(); try { ok = document.execCommand('copy'); } catch (e) { ok = false; } ta.remove(); }
+      note(ok ? 'Debug log copied. Paste it to Claude.' : 'Couldn\u2019t copy. Long-press the log to select it.');
+    });
+    $('#ai-log-clear').addEventListener('click', () => { aiLogLines = []; try { localStorage.removeItem(AILOG_KEY); } catch (e) { /* ignore */ } pre.textContent = '(empty)'; });
+  })();
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();
 
