@@ -567,10 +567,16 @@ svg .fill { fill: currentColor; stroke: none; }
     // Elements with special properties.
     GLOWSTONE: 97, GLUE: 98, BOUNCY: 99, IRON: 100, MAGNET: 101, COPPER: 102, BATTERY: 103,
     DRYICE: 104, NITRO: 105, CHOCOLATE: 106, MELTCHOC: 107, CORAL: 108,
+    // Second wave of built-ins. They live at the top of the id range (EXTRA..253) so
+    // inventions that players already saved (from 109 upwards) keep their ids.
+    SUGAR: 227, CARAMEL: 228, CANDY: 229, COTTONCANDY: 230, WAX: 231, MELTWAX: 232, PAPER: 233,
+    TAR: 234, SOAP: 235, GLITTER: 236, NEON: 237, STEEL: 238, PEARL: 239,
+    OWL: 240, BAT: 241, TURTLE: 242, MOUSE: 243, OCTOPUS: 244, PHOENIX: 245, UNICORN: 246, DUCK: 247,
+    LIGHTHOUSE: 248, PYRAMID: 249, IGLOO: 250, CANDLE: 251, FOUNTAIN: 252, GINGERBREAD: 253,
   };
-  // Ids from BUILTIN up to 253 are kept free for things the AI invents
+  // Ids from BUILTIN up to EXTRA-1 are kept free for things the AI invents
   // (254 and 255 are the Dropper and Eraser tools in the game).
-  const BUILTIN = 109, COUNT = 254;
+  const BUILTIN = 109, EXTRA = 227, COUNT = 254;
 
   /* kind: how it moves.  density: heavier things sink through lighter
      liquids.  slip: how readily a powder slides off a pile (0..1).
@@ -958,6 +964,110 @@ svg .fill { fill: currentColor; stroke: none; }
     ramp: ['#ff7a8a', '#ffb86a', '#c86aff', '#ff6ad0'], hint: 'A crystal seed planted in the sea.', recipe: 'Crystal Seed + Sea Water', desc: 'Grows in branches through sea water.',
     props: { grows: [[M.SEAWATER, M.WATER], 0.015] } });
 
+  /* ---------------- Second wave ---------------- */
+  // Sweets
+  C(M.SUGAR, { key: 'sugar', name: 'Sugar', kind: 'powder', density: 1.6, slip: 0.85,
+    colors: ['#ffffff', '#ece6f0'], hint: 'Something sweet dried out with grains.', recipe: 'Honey + Sand', desc: 'Dissolves in water. Melts into caramel near heat.',
+    props: { melts: [M.CARAMEL, 0.06] } });
+  C(M.CARAMEL, { key: 'caramel', name: 'Caramel', kind: 'liquid', density: 1.4, spread: 1,
+    colors: ['#e8a24a', '#b86a1e'], alpha: 240, hint: 'Warm up some sugar.', recipe: 'Sugar + Fire', desc: 'Gooey. Cools into candy, or sets fast on ice.',
+    props: { sets: [M.CANDY, 0.0008], freezes: [M.CANDY, 0.1] } });
+  C(M.CANDY, { key: 'candy', name: 'Candy', kind: 'solid', density: 6,
+    ramp: ['#ff5aa0', '#ffffff', '#ff5aa0', '#ffffff', '#7ad0ff'], hint: 'Caramel that cooled down.', recipe: 'Caramel + Ice', also: 'Caramel also cools into candy on its own.', desc: 'Stripy and sweet. Melts back into caramel near heat.',
+    props: { melts: [M.CARAMEL, 0.05] } });
+  C(M.COTTONCANDY, { key: 'cottoncandy', name: 'Cotton Candy', kind: 'powder', density: 0.35, slip: 0.45,
+    ramp: ['#ffb0dc', '#ffd0ec', '#b0d8ff', '#d0e8ff'], hint: 'Spin sugar up into the clouds.', recipe: 'Sugar + Cloud', desc: 'Fluffy and light. Vanishes in water, melts into sugar near heat.',
+    props: { melts: [M.SUGAR, 0.1] } });
+  // Wax and candles
+  C(M.WAX, { key: 'wax', name: 'Wax', kind: 'solid', density: 4,
+    colors: ['#fff4d0', '#f0dca0'], hint: 'What bees build their honeycomb from.', recipe: 'Bee + Honey', desc: 'Melts near flames and sets again as it cools.',
+    props: { melts: [M.MELTWAX, 0.06] } });
+  def(M.MELTWAX, { key: 'meltwax', name: 'Melted Wax', kind: 'liquid', density: 1, spread: 2, crafted: true,
+    colors: ['#fff8e0', '#f4e4b0'], alpha: 235, hint: 'Hold a flame to some wax.', recipe: 'Wax + Fire', desc: 'Drips and runs, then sets back into wax.',
+    props: { sets: [M.WAX, 0.002], freezes: [M.WAX, 0.1] } });
+  // Everyday stuff
+  C(M.PAPER, { key: 'paper', name: 'Paper', kind: 'solid', density: 2, flam: 0.6, burn: 18,
+    colors: ['#fbfaf4', '#e6e2d4'], hint: 'Soak wood and press it flat.', recipe: 'Wood + Water', desc: 'Burns up in a flash.' });
+  C(M.TAR, { key: 'tar', name: 'Tar', kind: 'liquid', density: 1.6, spread: 1, flam: 0.04, burn: 250,
+    colors: ['#2a2626', '#121010'], hint: 'Thick black oil mixed with coal.', recipe: 'Oil + Coal', desc: 'Thick, sticky and slow. Burns for a long time.',
+    props: { sticky: true } });
+  C(M.SOAP, { key: 'soap', name: 'Soap', kind: 'powder', density: 1.1, slip: 0.5,
+    colors: ['#ffd6ec', '#f4b8d8'], hint: 'Old-fashioned: ashes and oil.', recipe: 'Ash + Oil', desc: 'Blows bubbles in water. Cleans away oil, tar and mud.' });
+  C(M.STEEL, { key: 'steel', name: 'Steel', kind: 'solid', density: 9.5,
+    ramp: ['#9aa6b8', '#7a8698', '#b8c4d4', '#5a6678'], hint: 'Metal made stronger with coal.', recipe: 'Metal + Coal', desc: 'Never rusts. Shrugs off acid and explosions.' });
+  // Shiny magic
+  def(M.GLITTER, { key: 'glitter', name: 'Glitter', kind: 'powder', density: 1.3, slip: 0.95, magic: true,
+    ramp: ['#ff7ae6', '#ffd23a', '#7ae8ff', '#b07aff', '#ffffff'], hint: 'Stardust ground with glass.', recipe: 'Stardust + Glass', desc: 'Sparkles everywhere. Gets into everything.' });
+  def(M.NEON, { key: 'neon', name: 'Neon', kind: 'gas', density: 0.05, magic: true,
+    colors: ['#ff6ad8', '#ff3ab0'], alpha: 200, hint: 'Lightning trapped in vapor.', recipe: 'Lightning + Steam', desc: 'A glowing gas that floats up and never fades.',
+    props: { glow: [255, 90, 210] } });
+  def(M.PEARL, { key: 'pearl', name: 'Pearl', kind: 'powder', density: 3, slip: 0.7, magic: true,
+    colors: ['#fffaf4', '#eadcf0'], hint: 'Something shiny from the bottom of the sea.', recipe: 'Sea Water + Stardust', desc: 'Shimmers softly.',
+    props: { glow: [255, 240, 250] } });
+
+  // New creatures. These use the same movements and abilities as invented ones.
+  creature(M.OWL, { key: 'owl', name: 'Owl', colors: ['#a07850', '#f0e0c0'], move: 'fly',
+    hint: 'A bird that loves the moon.', recipe: 'Bird + Moon Dust', desc: 'Flies at night-time speed and snaps up bugs.',
+    pal: { b: '#8a6440', w: '#f0e0c0', e: '#ffd23a' }, ax: 2, ay: 2,
+    sprite: { walk: [['.b.b.', 'bebeb', 'bbwbb', '.bbb.'], ['.b.b.', 'bebeb', 'bbwbb', 'b.b.b']] }, abil: { eatsBugs: true } });
+  creature(M.BAT, { key: 'bat', name: 'Bat', colors: ['#4a3a5a', '#ff5a5a'], move: 'flutter',
+    hint: 'A bird that turned spooky.', recipe: 'Bird + Ghost', desc: 'Flaps about in a hurry.',
+    pal: { k: '#3a2a4a', e: '#ff5a5a' }, ax: 2, ay: 1,
+    sprite: { walk: [['k...k', 'kkekk', '.kkk.'], ['.....', 'kkekk', 'k.k.k']] }, abil: { speed: 1.6 } });
+  creature(M.TURTLE, { key: 'turtle', name: 'Turtle', colors: ['#4a8a3a', '#9ad06a'], move: 'wade',
+    hint: 'An egg laid in the sea.', recipe: 'Egg + Sea Water', desc: 'Slow and steady, on land or underwater.',
+    pal: { g: '#4a8a3a', G: '#2f6a2a', s: '#9ad06a', e: '#1a1a1a' }, ax: 4, ay: 2,
+    sprite: { walk: [['..gGg...', '.gGgGgse', '.s...s..'], ['..gGg...', '.gGgGgse', '..s...s.']] }, abil: { speed: 0.5 } });
+  creature(M.MOUSE, { key: 'mouse', name: 'Mouse', colors: ['#b0a8a8', '#ffb0c0'], move: 'walk',
+    hint: 'Life Essence + plain dirt.', recipe: 'Dirt + Life Essence', desc: 'Scurries about nibbling seeds and flowers. Runs from snakes and owls.',
+    pal: { g: '#b0a8a8', p: '#ffb0c0', k: '#1a1a1a' }, ax: 2, ay: 2,
+    sprite: { walk: [['...p.', 'pgggk', '.g.g.'], ['...p.', 'pgggk', 'g.g..']] },
+    abil: { speed: 1.8, graze: [M.SEED, M.FLOWER], flee: [M.SNAKE, M.OWL] } });
+  creature(M.OCTOPUS, { key: 'octopus', name: 'Octopus', colors: ['#c84ab8', '#e87ad8'], move: 'swim',
+    hint: 'Something wobbly + something fishy.', recipe: 'Jellyfish + Fish', desc: 'Swims with eight wiggly arms. Flops on land.',
+    pal: { p: '#c84ab8', P: '#e87ad8', e: '#ffffff' }, ax: 2, ay: 1,
+    sprite: { walk: [['.PPP.', 'PePeP', 'ppppp', 'p.p.p'], ['.PPP.', 'PePeP', 'ppppp', '.p.p.']] } });
+  creature(M.PHOENIX, { key: 'phoenix', name: 'Phoenix', colors: ['#ff6a1a', '#ffd23a'], move: 'fly',
+    hint: 'A bird with a flame that never goes out.', recipe: 'Bird + Eternal Flame', desc: 'A fireproof firebird that glows and trails sparkles.',
+    pal: { r: '#ff4a1a', o: '#ff9a2e', y: '#ffd23a', e: '#fff6c2' }, ax: 3, ay: 1,
+    sprite: { walk: [['yy.....', '.oooreo', '...rr..'], ['.......', 'yoooreo', 'y..rr..']] },
+    abil: { fireproof: true, glow: [255, 160, 60], trail: [M.SPARKLE, 0.15] } });
+  creature(M.UNICORN, { key: 'unicorn', name: 'Unicorn', colors: ['#ffffff', '#ff7ae6'], move: 'walk',
+    hint: 'A cow that drank a rainbow.', recipe: 'Cow + Rainbow', desc: 'Prances about leaving sparkles. Glows. Runs from dragons.',
+    pal: { w: '#ffffff', h: '#ffd23a', m: '#ff7ae6', M: '#7ab8ff', l: '#d8d8e8', k: '#2a2a3a' }, ax: 3, ay: 4,
+    sprite: { walk: [['......h', '....mwk', 'Mwwwww.', 'wwwwww.', '.l..l..'], ['......h', '....mwk', 'Mwwwww.', 'wwwwww.', 'l..l...']] },
+    abil: { speed: 1.2, glow: [255, 200, 250], trail: [M.SPARKLE, 0.1], flee: [M.DRAGON], graze: [M.FLOWER, M.PLANT] } });
+  creature(M.DUCK, { key: 'duck', name: 'Duck', colors: ['#f2f2f2', '#2f8f3c'], move: 'wade',
+    hint: 'A bird that loves a pond.', recipe: 'Bird + Water', desc: 'Waddles on land and paddles underwater.',
+    pal: { w: '#f2f2f2', g: '#2f8f3c', o: '#ff9a2e', k: '#1a1a1a' }, ax: 2, ay: 3,
+    sprite: { walk: [['...gg.', '...gko', 'wwwww.', '.o.o..'], ['...gg.', '...gko', 'wwwww.', 'o.o...']] } });
+
+  // New objects.
+  stamp(M.LIGHTHOUSE, { key: 'lighthouse', name: 'Lighthouse', colors: ['#d84a3a', '#fff6b0'],
+    hint: 'A brick tower with a light on top.', recipe: 'Glowstone + Brick', desc: 'A striped tower with a glowing lamp room.',
+    key2: { M: M.METAL, G: M.GLASS, Y: M.GLOWSTONE, B: M.BRICK, S: M.STONE },
+    rows: ['...MMM...', '..GGGGG..', '..GYYYG..', '..GGGGG..', '...BBB...', '...SSS...', '...BBB...', '...SSS...', '...BBB...', '..SSSSS..', '.BBBBBBB.'] });
+  stamp(M.PYRAMID, { key: 'pyramid', name: 'Pyramid', colors: ['#e8c88a', '#fff6b0'],
+    hint: 'Desert stone with treasure on top.', recipe: 'Sandstone + Gold', desc: 'A sandstone pyramid with a glowing capstone and a secret door.',
+    key2: { D: M.SANDSTONE, G: M.GLOWSTONE },
+    rows: ['........G........', '.......GGG.......', '......DDDDD......', '.....DDDDDDD.....', '....DDDDDDDDD....', '...DDDDDDDDDDD...', '..DDDDDDDDDDDDD..', '.DDDDDDD_DDDDDDD.', 'DDDDDDD___DDDDDDD'] });
+  stamp(M.IGLOO, { key: 'igloo', name: 'Igloo', colors: ['#d8f2ff', '#93d3f2'],
+    hint: 'A snowy house made of ice blocks.', recipe: 'Ice + Snow', desc: 'A dome of ice with a little doorway.',
+    key2: { I: M.ICE },
+    rows: ['....IIIII....', '..IIIIIIIII..', '.IIIIIIIIIII.', 'IIIIIIIIIIIII', 'IIII_____IIII', 'IIII_____IIII'] });
+  stamp(M.CANDLE, { key: 'candle', name: 'Candle', colors: ['#fff4d0', '#ff9a2e'],
+    hint: 'Wax with a glowing coal for a flame.', recipe: 'Wax + Ember', desc: 'A real wax candle. The flame melts the wax and it drips!',
+    key2: { F: M.FIRE, E: M.EMBER, X: M.WAX, M: M.METAL },
+    rows: ['..F..', '..E..', '.XXX.', '.XXX.', '.XXX.', '.XXX.', 'MMMMM'] });
+  stamp(M.FOUNTAIN, { key: 'fountain', name: 'Fountain', colors: ['#767b8f', '#3d86e6'],
+    hint: 'Stone and water, together at last.', recipe: 'Stone + Water', desc: 'A stone fountain with water spilling into its basin.',
+    key2: { S: M.STONE, W: M.WATER },
+    rows: ['.....WWW.....', '.....SSS.....', '......S......', '......S......', 'S.....S.....S', 'SWWWWWSWWWWWS', 'SSSSSSSSSSSSS'] });
+  stamp(M.GINGERBREAD, { key: 'gingerbread', name: 'Gingerbread House', colors: ['#7a4a2a', '#ff5aa0'],
+    hint: 'A house you could eat.', recipe: 'Chocolate + Candy', desc: 'Chocolate walls, a candy roof and sugar-glass windows.',
+    key2: { C: M.CANDY, H: M.CHOCOLATE, G: M.GLASS },
+    rows: ['......CCC......', '....CCCCCCC....', '..CCCCCCCCCCC..', 'CCCCCCCCCCCCCCC', '.HHHHHHHHHHHHH.', '.HGGHHH_HHHGGH.', '.HGGHHH_HHHGGH.', '.HHHHHH_HHHHHH.'] });
+
   /* Cauldron recipes: unordered pairs of ingredients. */
   const MAGIC = new Uint8Array(COUNT * COUNT);
   function brew(a, b, out) { MAGIC[a * COUNT + b] = out; MAGIC[b * COUNT + a] = out; }
@@ -1045,6 +1155,34 @@ svg .fill { fill: currentColor; stroke: none; }
   brew(M.OIL, M.GUNPOWDER, M.NITRO);
   brew(M.MUD, M.HONEY, M.CHOCOLATE);
   brew(M.CRYSTALSEED, M.SEAWATER, M.CORAL);
+  // Second wave
+  brew(M.HONEY, M.SAND, M.SUGAR);
+  brew(M.SUGAR, M.FIRE, M.CARAMEL);
+  brew(M.CARAMEL, M.ICE, M.CANDY);
+  brew(M.SUGAR, M.CLOUD, M.COTTONCANDY);
+  brew(M.BEE, M.HONEY, M.WAX);
+  brew(M.WAX, M.FIRE, M.MELTWAX);
+  brew(M.WOOD, M.WATER, M.PAPER);
+  brew(M.OIL, M.COAL, M.TAR);
+  brew(M.ASH, M.OIL, M.SOAP);
+  brew(M.METAL, M.COAL, M.STEEL);
+  brew(M.STARDUST, M.GLASS, M.GLITTER);
+  brew(M.LIGHTNING, M.STEAM, M.NEON);
+  brew(M.SEAWATER, M.STARDUST, M.PEARL);
+  brew(M.BIRD, M.MOONDUST, M.OWL);
+  brew(M.BIRD, M.GHOST, M.BAT);
+  brew(M.EGG, M.SEAWATER, M.TURTLE);
+  brew(M.DIRT, M.ESSENCE, M.MOUSE);
+  brew(M.JELLYFISH, M.FISH, M.OCTOPUS);
+  brew(M.BIRD, M.ETERNAL, M.PHOENIX);
+  brew(M.COW, M.RAINBOW, M.UNICORN);
+  brew(M.BIRD, M.WATER, M.DUCK);
+  brew(M.GLOWSTONE, M.BRICK, M.LIGHTHOUSE);
+  brew(M.SANDSTONE, M.GOLD, M.PYRAMID);
+  brew(M.ICE, M.SNOW, M.IGLOO);
+  brew(M.WAX, M.EMBER, M.CANDLE);
+  brew(M.STONE, M.WATER, M.FOUNTAIN);
+  brew(M.CHOCOLATE, M.CANDY, M.GINGERBREAD);
 
   /* ---------------- Mixing by traits ----------------
      Any pair without its own recipe still makes something sensible, worked
@@ -1076,6 +1214,11 @@ svg .fill { fill: currentColor; stroke: none; }
     [M.GLOWSTONE]: 'earth magic', [M.GLUE]: 'wet', [M.BOUNCY]: 'earth', [M.IRON]: 'metal earth sandy', [M.MAGNET]: 'metal',
     [M.COPPER]: 'metal', [M.BATTERY]: 'metal hot', [M.DRYICE]: 'cold air', [M.NITRO]: 'boom wet', [M.CHOCOLATE]: 'earth',
     [M.MELTCHOC]: 'wet', [M.CORAL]: 'life earth',
+    [M.SUGAR]: 'earth sandy', [M.CARAMEL]: 'wet', [M.CANDY]: 'earth', [M.COTTONCANDY]: 'air', [M.WAX]: 'fuel', [M.MELTWAX]: 'wet fuel',
+    [M.PAPER]: 'fuel life', [M.TAR]: 'wet fuel', [M.SOAP]: 'wet', [M.STEEL]: 'metal', [M.GLITTER]: 'magic sandy', [M.NEON]: 'air magic',
+    [M.PEARL]: 'magic earth', [M.OWL]: 'life air', [M.BAT]: 'life air', [M.TURTLE]: 'life wet', [M.MOUSE]: 'life earth',
+    [M.OCTOPUS]: 'life wet', [M.PHOENIX]: 'life hot magic', [M.UNICORN]: 'life magic', [M.DUCK]: 'life wet',
+    [M.LIGHTHOUSE]: 'earth magic', [M.PYRAMID]: 'earth sandy', [M.IGLOO]: 'cold', [M.CANDLE]: 'hot fuel', [M.FOUNTAIN]: 'wet earth', [M.GINGERBREAD]: 'earth',
   };
   const T = {};
   for (const k in TRAITS) T[k] = new Set(TRAITS[k].split(' '));
@@ -1202,6 +1345,14 @@ svg .fill { fill: currentColor; stroke: none; }
   rx(M.DRYICE, M.WATER, 0.03, KEEP, M.ICE);
   rx(M.DRYICE, M.SEAWATER, 0.02, KEEP, M.ICE);
   [M.GLUE, M.IRON, M.MAGNET, M.COPPER, M.BATTERY, M.CHOCOLATE, M.MELTCHOC, M.CORAL, M.BOUNCY].forEach((b) => rx(M.ACID, b, 0.12, KEEP, E));
+  // Second wave in the world
+  rx(M.WATER, M.SUGAR, 0.03, KEEP, E);                         // sugar dissolves
+  rx(M.COTTONCANDY, M.WATER, 0.25, E, KEEP);                   // cotton candy vanishes in water
+  rx(M.SOAP, M.WATER, 0.04, KEEP, M.BUBBLE, { p: 0.25, a: E }); // bubbles (and the soap gets used up)
+  rx(M.SOAP, M.OIL, 0.15, KEEP, E);
+  rx(M.SOAP, M.TAR, 0.06, KEEP, E);
+  rx(M.SOAP, M.MUD, 0.05, KEEP, M.WATER);
+  [M.SUGAR, M.CARAMEL, M.CANDY, M.COTTONCANDY, M.WAX, M.MELTWAX, M.PAPER, M.TAR, M.SOAP, M.GLITTER, M.PEARL].forEach((b) => rx(M.ACID, b, 0.12, KEEP, E));
 
   // Things that set flammable neighbours alight.
   const IGNITERS = new Set([M.FIRE, M.LAVA, M.LIGHTNING, M.ETERNAL, M.EMBER, M.PLASMA, M.ROCKET]);
@@ -1209,7 +1360,7 @@ svg .fill { fill: currentColor; stroke: none; }
   // Turn '#rrggbb' into [r, g, b].
   function hex(h) { const n = parseInt(h.slice(1, 7), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255, h.length > 7 ? parseInt(h.slice(7, 9), 16) : 255]; }
   // Empty slots waiting for inventions.
-  for (let id = BUILTIN; id < COUNT; id++) def(id, { key: 'slot' + id, name: '', kind: 'empty', density: 0, colors: ['#000000', '#000000'], alpha: 0, reserved: true, hidden: true });
+  for (let id = BUILTIN; id < EXTRA; id++) def(id, { key: 'slot' + id, name: '', kind: 'empty', density: 0, colors: ['#000000', '#000000'], alpha: 0, reserved: true, hidden: true });
   MATS.forEach((m) => { m.rgb = (m.colors || m.ramp).map(hex); if (!m.colors) m.colors = [m.ramp[0], m.ramp[m.ramp.length - 1]]; });
 
   /* Register something the AI invented in slot `id`, brewed from a + b.
@@ -1231,7 +1382,7 @@ svg .fill { fill: currentColor; stroke: none; }
     return m;
   }
 
-  window.SandMats = { M, MATS, COUNT, BUILTIN, RX, KEEP, IGNITERS, MAGIC, traitMix, hex, invent };
+  window.SandMats = { M, MATS, COUNT, BUILTIN, EXTRA, RX, KEEP, IGNITERS, MAGIC, traitMix, hex, invent };
 })();
 
 </script>
@@ -1280,7 +1431,7 @@ svg .fill { fill: currentColor; stroke: none; }
   [M.FIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.PLASMA, M.LIGHTNING, M.EMBER].forEach((m) => { HOT[m] = 1; });
   const BUGS = new Uint8Array(COUNT), FISHY = new Uint8Array(COUNT);
   BUGS[M.FIREFLY] = BUGS[M.BEE] = BUGS[M.ANT] = BUGS[M.BUTTERFLY] = BUGS[M.CATERPILLAR] = 1; FISHY[M.FISH] = FISHY[M.TADPOLE] = 1;
-  const SNAKE_FOOD = new Uint8Array(COUNT); [M.FROG, M.ANT, M.RABBIT, M.EGG].forEach((m) => { SNAKE_FOOD[m] = 1; });
+  const SNAKE_FOOD = new Uint8Array(COUNT); [M.FROG, M.ANT, M.RABBIT, M.EGG, M.MOUSE].forEach((m) => { SNAKE_FOOD[m] = 1; });
   // Abilities per creature (see materials.js), and what counts as fire for the fireproof.
   const ABIL = []; MATS.forEach((m) => { if (m && m.abil) ABIL[m.id] = m.abil; });
   const FIERY = new Uint8Array(COUNT);
@@ -1329,7 +1480,7 @@ svg .fill { fill: currentColor; stroke: none; }
 
   /* Inventions: refresh every lookup for one material after the AI adds it. */
   let COLORVER = 1;
-  const MOVE = [];
+  const MOVE = []; MATS.forEach((m) => { if (m && m.move) MOVE[m.id] = m.move; }); // built-in creatures that use the shared movements
   // Inventions that act like a built-in element: the grid holds the built-in, and a
   // 'skin' layer remembers which invention it really is (for its colours and name).
   const LIKE = new Uint8Array(COUNT);
@@ -1465,7 +1616,7 @@ svg .fill { fill: currentColor; stroke: none; }
         const x = cx + dx, y = cy + dy;
         if (x < 0 || y < 0 || x >= w || y >= h) continue;
         const j = y * w + x, b = this.t[j];
-        if (b === M.METAL || b === M.OBSIDIAN || b === M.DIAMOND || b === M.BRICK) continue;
+        if (b === M.METAL || b === M.OBSIDIAN || b === M.DIAMOND || b === M.BRICK || b === M.STEEL) continue;
         if (b === M.GUNPOWDER) { this.t[j] = 0; this.pendingBlasts.push(x, y); continue; }
         if (b === M.GLASS) { this.put(j, M.SAND); continue; }
         if (b === M.STONE) { if (rnd() < 0.5) this.put(j, M.SAND); continue; }
@@ -1651,7 +1802,7 @@ svg .fill { fill: currentColor; stroke: none; }
         if (xx >= 0 && yy >= 0 && xx < this.w && yy < this.h && t[yy * this.w + xx] === 0) this.swap(i, yy * this.w + xx);
         return;
       }
-      if (life[i]-- <= 1) {
+      if (m !== M.NEON && life[i]-- <= 1) { // neon never fades
         if (m === M.STEAM) {
           if (y < this.h * 0.3 && rnd() < 0.6) this.put(i, M.CLOUD);
           else if (rnd() < 0.4) this.put(i, M.WATER);
@@ -2852,7 +3003,7 @@ svg .fill { fill: currentColor; stroke: none; }
         else if (m === M.COLDFIRE) s = Math.max(0, 15 - Math.min(15, life[i] >> 1));
         else if (m === M.RAINBOW) s = ((i % this.w) + ((i / this.w) | 0) + (fr >> 1)) & 15;
         else if (m === M.IRON) { s = (s * 2 / 3) | 0; if (((sh[i] + fr * 2) & 127) < 2) s = 15; } // steel blue with a little metallic glint
-        else if (m === M.STARDUST || m === M.GOLD || m === M.FAIRY || m === M.SPARKLE) { if (((sh[i] + fr * 3) & 63) < 5) s = m === M.GOLD ? 0 : (fr >> 2) & 15; }
+        else if (m === M.STARDUST || m === M.GOLD || m === M.FAIRY || m === M.SPARKLE || m === M.GLITTER || m === M.PEARL) { if (((sh[i] + fr * 3) & 63) < 5) s = m === M.GOLD ? 0 : (fr >> 2) & 15; }
         else if (m === M.ETERNAL) s = (s + (fr >> 1)) & 15;
         else if (m === M.VOID || m === M.MIRROR || m === M.CAULDRON) { if (((sh[i] + fr) & 127) < 3) s = m === M.CAULDRON ? 0 : 15 - s; }
         else if (m === M.DIAMOND || m === M.STAR || m === M.FROSTCRYSTAL) { s = ((sh[i] >> 3) + (fr >> 3)) & 31; if (s > 15) s = 31 - s; if (((sh[i] + fr * 2) & 63) < 3) s = 0; }
@@ -2929,7 +3080,10 @@ svg .fill { fill: currentColor; stroke: none; }
     M.FISH, M.BIRD, M.WORM, M.FIREFLY, M.FROG, M.BEE, M.ANT, M.SNAIL, M.LIZARD, M.PENGUIN, M.CRAB,
     M.DRAGON, M.COW, M.SNAKE, M.RABBIT, M.JELLYFISH, M.GHOST, M.TADPOLE, M.CATERPILLAR, M.BUTTERFLY, M.EGG,
     M.HOUSE, M.VOLCANO, M.CHEST, M.SNOWMAN, M.CAMPFIRE, M.CASTLE,
-    M.GLOWSTONE, M.GLUE, M.BOUNCY, M.IRON, M.MAGNET, M.COPPER, M.BATTERY, M.DRYICE, M.NITRO, M.CHOCOLATE, M.MELTCHOC, M.CORAL];
+    M.GLOWSTONE, M.GLUE, M.BOUNCY, M.IRON, M.MAGNET, M.COPPER, M.BATTERY, M.DRYICE, M.NITRO, M.CHOCOLATE, M.MELTCHOC, M.CORAL,
+    M.SUGAR, M.CARAMEL, M.CANDY, M.COTTONCANDY, M.WAX, M.MELTWAX, M.PAPER, M.TAR, M.SOAP, M.STEEL, M.GLITTER, M.NEON, M.PEARL,
+    M.OWL, M.BAT, M.TURTLE, M.MOUSE, M.OCTOPUS, M.PHOENIX, M.UNICORN, M.DUCK,
+    M.LIGHTHOUSE, M.PYRAMID, M.IGLOO, M.CANDLE, M.FOUNTAIN, M.GINGERBREAD];
   const brewed = (m) => MATS[m].magic || MATS[m].crafted || MATS[m].creature || MATS[m].object || MATS[m].invented;
   const isCreature = (m) => m > 0 && m < COUNT && !!MATS[m].creature;
   const isObject = (m) => m > 0 && m < COUNT && !!MATS[m].object;
@@ -3335,7 +3489,8 @@ svg .fill { fill: currentColor; stroke: none; }
      built from the game's own building blocks. */
   const AI_DEFAULT_URL = 'https://super-mode-0dd5.christers20.workers.dev';                 // paste your Worker address here to switch the AI on for everyone
   const INV_KEY = 'sandalchemy.inventions.v1', AI_KEY = 'sandalchemy.ai.v1';
-  const { BUILTIN, invent } = window.SandMats;
+  const { BUILTIN, EXTRA, invent } = window.SandMats;
+  const isBuiltin = (m) => m > 0 && (m < BUILTIN || (m >= EXTRA && m < COUNT));
   let inventions = [];                       // [{ id, a, b, spec }]
   let aiSettings = { on: true, url: '', mode: 'cloud', model: 'small' };
   try { const s = JSON.parse(localStorage.getItem(AI_KEY) || 'null'); if (s) aiSettings = Object.assign(aiSettings, s); } catch (e) { /* ignore */ }
@@ -3383,7 +3538,7 @@ svg .fill { fill: currentColor; stroke: none; }
   };
   // Turn the AI's answer into a safe material entry (or null if it doesn't make sense).
   const NOT_LIKE = new Set([M.CAULDRON, M.SPARKLE, M.ROCKET]);
-  function likeOk(m) { return m > 0 && m < BUILTIN && !MATS[m].creature && !MATS[m].object && !MATS[m].reserved && KIND[m] !== K.empty && !NOT_LIKE.has(m); }
+  function likeOk(m) { return isBuiltin(m) && !MATS[m].creature && !MATS[m].object && !MATS[m].reserved && KIND[m] !== K.empty && !NOT_LIKE.has(m); }
   const LIKE_WORDS = [[/storm|thundercloud|rain ?cloud/, M.STORM], [/lightning|thunder|\bbolt|\bzap/, M.LIGHTNING], [/plasma/, M.PLASMA],
     [/\blava|magma/, M.LAVA], [/firework/, M.FIREWORK], [/\b(fire|flames?|blaze|inferno)\b/, M.FIRE], [/\bembers?\b/, M.EMBER], [/\bacid/, M.ACID],
     [/bubbles?\b/, M.BUBBLE], [/\bseeds?\b/, M.SEED], [/\bvines?\b/, M.VINE], [/\bslime/, M.SLIME], [/\bhoney/, M.HONEY]];
@@ -3533,7 +3688,7 @@ svg .fill { fill: currentColor; stroke: none; }
   function loadInventions(list) {
     if (!Array.isArray(list)) return;
     // Inventions made from other inventions need their ingredients first, so go round a few times.
-    let left = list.slice(0, COUNT - BUILTIN);
+    let left = list.slice(0, EXTRA - BUILTIN);
     for (let pass = 0; pass < 8 && left.length; pass++) {
       const next = [];
       left.forEach((r) => {
@@ -3569,10 +3724,11 @@ svg .fill { fill: currentColor; stroke: none; }
     const ABILITIES = ['breathes_fire', 'glows', 'fireproof', 'grazes', 'lays_eggs', 'eats_bugs', 'eats_fish', 'scared_of_fire', 'leaves_trail', 'fast', 'slow'];
     // Materials an object can be built from (names must match the game).
     // Built-in elements an invented element can act like.
-    const LIKE_NAMES = MATS.slice(1, BUILTIN).filter((m) => m && likeOk(m.id) && !m.hidden).map((m) => m.name);
+    const LIKE_NAMES = MATS.filter((m, i) => isBuiltin(i)).filter((m) => m && likeOk(m.id) && !m.hidden).map((m) => m.name);
     const BUILD_MATERIALS = ['Sand', 'Water', 'Stone', 'Fire', 'Glass', 'Lava', 'Obsidian', 'Salt', 'Snow', 'Ice', 'Mud', 'Plant', 'Wood', 'Ash', 'Dirt', 'Oil',
       'Gunpowder', 'Metal', 'Rust', 'Crystal', 'Gold', 'Slime', 'Mirror', 'Flower', 'Clay', 'Brick', 'Coal', 'Diamond', 'Sandstone', 'Moss', 'Vine', 'Cactus',
-      'Honey', 'Sea Water', 'Ember', 'Charcoal', 'Glowstone', 'Copper', 'Magnet', 'Chocolate', 'Coral', 'Eternal Flame', 'Cloud'];
+      'Honey', 'Sea Water', 'Ember', 'Charcoal', 'Glowstone', 'Copper', 'Magnet', 'Chocolate', 'Coral', 'Eternal Flame', 'Cloud',
+      'Candy', 'Wax', 'Paper', 'Steel', 'Sugar', 'Tar'];
 
     const SCHEMA = {
       type: 'object',
