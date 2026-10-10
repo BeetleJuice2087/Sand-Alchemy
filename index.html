@@ -2585,9 +2585,9 @@ svg .fill { fill: currentColor; stroke: none; }
       this.fall(c, (m) => m === 0 || OPEN[m] || WATERY[m]);
       if (!c.hatch) c.hatch = 1500 + ri(1200);
       if (c.age > c.hatch) {
-        let k = c.into;
+        let k = c.into || (MATS[c.k].hatches > 0 && MATS[MATS[c.k].hatches] && MATS[MATS[c.k].hatches].creature ? MATS[c.k].hatches : 0);
         if (!k) { // a brewed egg: a surprise from the creatures you've found
-          const known = []; for (let m = 0; m < COUNT; m++) if (MATS[m].creature && m !== M.EGG && this.discovered[m]) known.push(m);
+          const known = []; for (let m = 0; m < COUNT; m++) if (MATS[m].creature && m !== M.EGG && MATS[m].move !== 'egg' && this.discovered[m]) known.push(m);
           k = known.length ? known[ri(known.length)] : M.BIRD;
         }
         c.dead = 'hatched';
@@ -2617,6 +2617,7 @@ svg .fill { fill: currentColor; stroke: none; }
       if (A.graze) this.graze(c);
       const sp = A.speed || 1;
       switch (MOVE[c.k]) {
+        case 'egg': this.egg(c); return;
         case 'fly': this.bird(c, here); break;
         case 'swim': this.fish(c, here); break;
         case 'hop': this.frog(c, here, list); break;
@@ -3358,7 +3359,7 @@ svg .fill { fill: currentColor; stroke: none; }
   GROUPS.push(INV_GROUP);
 
   const BAD_WORDS = /\b(ass|arse|bitch|bastard|crap|damn|dick|fuck|shit|piss|cock|cunt|slut|whore|nazi|porn|sex|kill|murder|gun|drug|weed|beer|wine|vodka|blood|gore)\w*/i;
-  const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift'];
+  const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg'];
   const STATES = ['powder', 'liquid', 'gas', 'solid'];
   const hexOk = (c) => typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
   const normName = (n) => String(n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -3387,6 +3388,29 @@ svg .fill { fill: currentColor; stroke: none; }
     [/\blava|magma/, M.LAVA], [/firework/, M.FIREWORK], [/\b(fire|flames?|blaze|inferno)\b/, M.FIRE], [/\bembers?\b/, M.EMBER], [/\bacid/, M.ACID],
     [/bubbles?\b/, M.BUBBLE], [/\bseeds?\b/, M.SEED], [/\bvines?\b/, M.VINE], [/\bslime/, M.SLIME], [/\bhoney/, M.HONEY]];
   function likeFromName(name) { const n = String(name).toLowerCase(); for (const [re, m] of LIKE_WORDS) if (re.test(n)) return m; return 0; }
+  const EGG_WORDS = /\b(eggs?|cocoons?|chrysalis|frogspawn)\b/i;
+  const isCreatureMat = (m) => m > 0 && m < COUNT && MATS[m] && MATS[m].creature && !MATS[m].reserved && m !== M.EGG && MATS[m].move !== 'egg';
+  // What an egg hatches into: what the AI said, else a creature named in the egg's name (Frog Egg -> Frog),
+  // else a creature it was brewed from, else a surprise (0).
+  function hatchTarget(spec, name, a, b) {
+    let m = findByName(spec.hatches_into); if (isCreatureMat(m)) return m;
+    const n = ' ' + name.toLowerCase() + ' '; let best = 0, len = 0;
+    for (let k = 1; k < COUNT; k++) {
+      if (!isCreatureMat(k)) continue;
+      const cn = MATS[k].name.toLowerCase();
+      if (cn.length > len && n.includes(' ' + cn + ' ')) { best = k; len = cn.length; }
+    }
+    if (best) return best;
+    return isCreatureMat(a) ? a : isCreatureMat(b) ? b : 0;
+  }
+  function eggEntry(spec, base, cols, name, a, b) {
+    const into = hatchTarget(spec, name, a, b);
+    const rows = ['.aa.', 'abaa', 'aaba', '.aa.'];
+    const told = spec.movement === 'egg' && cleanText(spec.description, 90);
+    const desc = told || (into ? `A little egg. Leave it be and it hatches into a ${MATS[into].name}!` : 'A little egg. Leave it be and see what hatches!');
+    return Object.assign(base, { desc, kind: 'creature', density: 1, creature: true, colors: [cols[0], cols[1]], move: 'egg', traits: 'life',
+      pal: { a: cols[0], b: cols[1], c: cols[2], d: cols[3] }, ax: 1, ay: 3, sprite: { walk: [rows, rows] }, abil: {}, hatches: into, layEgg: false });
+  }
   function buildEntry(spec, a, b) {
     if (!spec || typeof spec !== 'object') return null;
     const name = cleanName(spec.name); if (!name) return null;
@@ -3398,6 +3422,8 @@ svg .fill { fill: currentColor; stroke: none; }
     const has = (list, x) => Array.isArray(list) && list.map((v) => String(v).toLowerCase()).includes(x);
     const base = { key: 'inv-' + normName(name), name, desc, recipe, hint: 'Invented by the Cauldron spirit.', invented: true };
     const rgb = window.SandMats.hex(cols[0]).slice(0, 3);
+    // Eggs (and cocoons) sit still and hatch, whatever the AI said about how they move.
+    if (spec.movement === 'egg' || (type !== 'object' && EGG_WORDS.test(name))) return eggEntry(spec, base, cols, name, a, b);
     if (type === 'creature') {
       const move = MOVES.includes(spec.movement) ? spec.movement : 'walk';
       // Pixel picture: up to 7 wide and 5 tall, letters a-d are the four colours.
@@ -3539,7 +3565,7 @@ svg .fill { fill: currentColor; stroke: none; }
   const AIP = (() => {
     const STATES = ['powder', 'liquid', 'gas', 'solid'];
     const PROPS = ['glows', 'sticky', 'bouncy', 'flammable', 'explosive', 'evaporates', 'melts', 'freezes', 'grows', 'magnetic', 'conducts', 'hot', 'cold'];
-    const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift'];
+    const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg'];
     const ABILITIES = ['breathes_fire', 'glows', 'fireproof', 'grazes', 'lays_eggs', 'eats_bugs', 'eats_fish', 'scared_of_fire', 'leaves_trail', 'fast', 'slow'];
     // Materials an object can be built from (names must match the game).
     // Built-in elements an invented element can act like.
@@ -3560,6 +3586,7 @@ svg .fill { fill: currentColor; stroke: none; }
         weight: { type: 'number' },
         properties: { type: 'array', items: { type: 'string', enum: PROPS } },
         movement: { type: 'string', enum: MOVES },
+        hatches_into: { type: 'string' },
         abilities: { type: 'array', items: { type: 'string', enum: ABILITIES } },
         sprite: { type: 'array', items: { type: 'string' } },
         build: { type: 'array', items: { type: 'string' } },
@@ -3585,7 +3612,8 @@ svg .fill { fill: currentColor; stroke: none; }
     - weight: 1 (very light) to 10 (very heavy).
     - properties: any that fit, from: ${PROPS.join(', ')}.
     For a creature also give:
-    - movement: one of ${MOVES.join(', ')}. (wade = walks on land and underwater; drift = floats slowly)
+    - movement: one of ${MOVES.join(', ')}. (wade = walks on land and underwater; drift = floats slowly; egg = an egg or cocoon that sits still and hatches)
+    - hatches_into: only for movement "egg": the name of the creature that hatches out (like "Frog" for a Frog Egg).
     - abilities: any that fit, from: ${ABILITIES.join(', ')}.
     - sprite: a tiny side-view pixel picture facing RIGHT, 2 to 5 rows of up to 7 characters. Use letters a, b, c, d for the four colours and "." for empty.
       Example (a little pig): [".....aa", "aaaaaab", "aaaaaa.", ".c..c.."]
