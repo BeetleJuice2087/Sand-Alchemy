@@ -1028,10 +1028,10 @@ svg .fill { fill: currentColor; stroke: none; }
     hint: 'A bird that turned spooky.', recipe: 'Bird + Ghost', desc: 'Flaps about in a hurry.',
     pal: { k: '#3a2a4a', e: '#ff5a5a' }, ax: 2, ay: 1,
     sprite: { walk: [['k...k', 'kkekk', '.kkk.'], ['.....', 'kkekk', 'k.k.k']] }, abil: { speed: 1.6 } });
-  creature(M.TURTLE, { key: 'turtle', name: 'Turtle', colors: ['#4a8a3a', '#9ad06a'], move: 'wade',
-    hint: 'An egg laid in the sea.', recipe: 'Egg + Sea Water', desc: 'Slow and steady, on land or underwater.',
+  creature(M.TURTLE, { key: 'turtle', name: 'Turtle', colors: ['#4a8a3a', '#9ad06a'], move: 'amphibian',
+    hint: 'An egg laid in the sea.', recipe: 'Egg + Sea Water', desc: 'Swims all around the water and plods about on land.',
     pal: { g: '#4a8a3a', G: '#2f6a2a', s: '#9ad06a', e: '#1a1a1a' }, ax: 4, ay: 2,
-    sprite: { walk: [['..gGg...', '.gGgGgse', '.s...s..'], ['..gGg...', '.gGgGgse', '..s...s.']] }, abil: { speed: 0.5 } });
+    sprite: { walk: [['..gGg...', '.gGgGgse', '.s...s..'], ['..gGg...', '.gGgGgse', '..s...s.']] }, abil: { speed: 0.8 } });
   creature(M.MOUSE, { key: 'mouse', name: 'Mouse', colors: ['#b0a8a8', '#ffb0c0'], move: 'walk',
     hint: 'Life Essence + plain dirt.', recipe: 'Dirt + Life Essence', desc: 'Scurries about nibbling seeds and flowers. Runs from snakes and owls.',
     pal: { g: '#b0a8a8', p: '#ffb0c0', k: '#1a1a1a' }, ax: 2, ay: 2,
@@ -1053,8 +1053,8 @@ svg .fill { fill: currentColor; stroke: none; }
     pal: { w: '#ffffff', h: '#ffd23a', m: '#ff7ae6', M: '#7ab8ff', l: '#d8d8e8', k: '#2a2a3a' }, ax: 3, ay: 4,
     sprite: { walk: [['......h', '....mwk', 'Mwwwww.', 'wwwwww.', '.l..l..'], ['......h', '....mwk', 'Mwwwww.', 'wwwwww.', 'l..l...']] },
     abil: { speed: 1.2, glow: [255, 200, 250], trail: [M.SPARKLE, 0.1], flee: [M.DRAGON], graze: [M.FLOWER, M.PLANT] } });
-  creature(M.DUCK, { key: 'duck', name: 'Duck', colors: ['#f2f2f2', '#2f8f3c'], move: 'wade',
-    hint: 'A bird that loves a pond.', recipe: 'Bird + Water', desc: 'Waddles on land and paddles underwater.',
+  creature(M.DUCK, { key: 'duck', name: 'Duck', colors: ['#f2f2f2', '#2f8f3c'], move: 'paddle',
+    hint: 'A bird that loves a pond.', recipe: 'Bird + Water', desc: 'Floats and paddles on the water, dives now and then, and waddles about on land.',
     pal: { w: '#f2f2f2', g: '#2f8f3c', o: '#ff9a2e', k: '#1a1a1a' }, ax: 2, ay: 3,
     sprite: { walk: [['...gg.', '...gko', 'wwwww.', '.o.o..'], ['...gg.', '...gko', 'wwwww.', 'o.o...']] } });
 
@@ -2590,7 +2590,8 @@ svg .fill { fill: currentColor; stroke: none; }
         const ahead = this.cellAt(c.x + c.dir, c.y);
         if (fallThru(ahead)) {
           // Don't walk off a big drop (most of the time).
-          let drop = 0; while (drop < 6 && fallThru(this.cellAt(c.x + c.dir, c.y + drop + 1))) drop++;
+          const gap = o.dive ? pass : fallThru; // swimmers only count air: a pond isn't a cliff to them
+          let drop = 0; while (drop < 6 && gap(this.cellAt(c.x + c.dir, c.y + drop + 1))) drop++;
           if (drop >= 6 && !o.climb && rnd() < 0.97) { c.dir = -c.dir; break; }
           if (!o.waterWalk && !o.dive && (WATERY[ahead] || WATERY[this.cellAt(c.x + c.dir, c.y + 1)]) && rnd() < 0.95) { c.dir = -c.dir; break; }
           c.x += c.dir;
@@ -2627,6 +2628,51 @@ svg .fill { fill: currentColor; stroke: none; }
       }
       if (c.s === 3) c.s = 0;
       this.walk(c, here, { speed: 0.12, slide: true, dive: true, drown: 1e9, pause: 0.4 });
+    }
+
+    /* Floats on the water like a duck: bobs up to the surface, paddles along it, dives
+       now and then, and climbs out onto the bank to waddle about on land. */
+    paddle(c, here, sp) {
+      const sw = (m) => WATERY[m], air = (m) => m === 0 || OPEN[m];
+      if (WATERY[here]) {
+        c.a = 0; c.s = 3; c.lt = 0;
+        if (c.dv > 0) { c.dv--; if (!this.go(c, c.dir * 0.15, 0.25, sw)) this.go(c, 0, 0.25, sw); return; } // diving
+        const surface = !WATERY[this.cellAt(c.x, c.y - 1)];
+        if (!surface) { if (!this.go(c, 0, -0.35, sw)) this.go(c, c.dir * 0.2, 0, sw); return; } // bob back up
+        c.y = Math.round(c.y);
+        if (rnd() < 0.006) c.dir = -c.dir;
+        if (!this.go(c, c.dir * 0.18 * sp, 0, sw)) {
+          // Reached the bank or a wall: hop out onto land if there's room, otherwise turn round.
+          const x = Math.round(c.x + c.dir), y = Math.round(c.y) - 1;
+          if (air(this.cellAt(x, y)) && !sw(this.cellAt(x, y + 1)) && rnd() < 0.5) { c.x = x; c.y = y; c.s = 0; }
+          else c.dir = -c.dir;
+        }
+        if (rnd() < 0.002) c.dv = 25 + ri(40);
+        return;
+      }
+      if (c.s === 3) c.s = 0;
+      c.lt = (c.lt || 0) + 1; // after a good waddle, the next pond is too tempting
+      this.walk(c, here, { speed: 0.13 * sp, drown: 1e9, pause: 0.4, dive: c.lt > 500 });
+    }
+    /* Swims all around the water like a turtle (slowly, never drowns) and walks on land. */
+    amphibian(c, here, sp) {
+      const sw = (m) => WATERY[m], air = (m) => m === 0 || OPEN[m];
+      if (WATERY[here]) {
+        c.a = 0; c.s = 3; c.lt = 0;
+        if (!c.out && rnd() < 0.0007) c.out = true; // time for a walk: head up and find the bank
+        if (rnd() < 0.008) c.dir = -c.dir;
+        c.vy = c.out ? -0.12 : Math.max(-0.12, Math.min(0.12, (c.vy || 0) * 0.92 + (rnd() - 0.5) * 0.05));
+        if (!this.go(c, c.dir * 0.2 * sp, 0, sw)) {
+          const x = Math.round(c.x + c.dir), y = Math.round(c.y) - 1;
+          if (c.out && air(this.cellAt(x, y)) && !sw(this.cellAt(x, y + 1))) { c.x = x; c.y = y; c.s = 0; c.out = false; return; } // up onto the bank
+          c.dir = -c.dir; // a wall, not a bank: swim the other way
+        }
+        if (!this.go(c, 0, c.vy, sw)) c.vy = c.out ? 0 : -c.vy;
+        return;
+      }
+      if (c.s === 3) c.s = 0;
+      c.out = false; c.lt = (c.lt || 0) + 1;
+      this.walk(c, here, { speed: 0.1 * sp, drown: 1e9, pause: 0.45, dive: c.lt > 600 });
     }
 
     /* ---- Abilities shared by any creature that has them ---- */
@@ -2785,6 +2831,8 @@ svg .fill { fill: currentColor; stroke: none; }
       const sp = A.speed || 1;
       switch (MOVE[c.k]) {
         case 'egg': this.egg(c); return;
+        case 'paddle': this.paddle(c, here, sp); break;
+        case 'amphibian': this.amphibian(c, here, sp); break;
         case 'fly': this.bird(c, here); break;
         case 'swim': this.fish(c, here); break;
         case 'hop': this.frog(c, here, list); break;
@@ -3530,7 +3578,7 @@ svg .fill { fill: currentColor; stroke: none; }
   GROUPS.push(INV_GROUP);
 
   const BAD_WORDS = /\b(ass|arse|bitch|bastard|crap|damn|dick|fuck|shit|piss|cock|cunt|slut|whore|nazi|porn|sex|kill|murder|gun|drug|weed|beer|wine|vodka|blood|gore)\w*/i;
-  const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg'];
+  const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg', 'paddle', 'amphibian'];
   const STATES = ['powder', 'liquid', 'gas', 'solid'];
   const hexOk = (c) => typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
   const normName = (n) => String(n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -3736,7 +3784,7 @@ svg .fill { fill: currentColor; stroke: none; }
   const AIP = (() => {
     const STATES = ['powder', 'liquid', 'gas', 'solid'];
     const PROPS = ['glows', 'sticky', 'bouncy', 'flammable', 'explosive', 'evaporates', 'melts', 'freezes', 'grows', 'magnetic', 'conducts', 'hot', 'cold'];
-    const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg'];
+    const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg', 'paddle', 'amphibian'];
     const ABILITIES = ['breathes_fire', 'glows', 'fireproof', 'grazes', 'lays_eggs', 'eats_bugs', 'eats_fish', 'scared_of_fire', 'leaves_trail', 'fast', 'slow'];
     // Materials an object can be built from (names must match the game).
     // Built-in elements an invented element can act like.
@@ -3784,7 +3832,7 @@ svg .fill { fill: currentColor; stroke: none; }
     - weight: 1 (very light) to 10 (very heavy).
     - properties: any that fit, from: ${PROPS.join(', ')}.
     For a creature also give:
-    - movement: one of ${MOVES.join(', ')}. (wade = walks on land and underwater; drift = floats slowly; egg = an egg or cocoon that sits still and hatches)
+    - movement: one of ${MOVES.join(', ')}. (wade = walks on land and underwater; drift = floats slowly; egg = an egg or cocoon that sits still and hatches; paddle = floats on water like a duck and waddles on land; amphibian = swims all through water like a turtle and walks on land)
     - hatches_into: only for movement "egg": the name of the creature that hatches out (like "Frog" for a Frog Egg).
     - abilities: any that fit, from: ${ABILITIES.join(', ')}.
     - sprite: a tiny side-view pixel picture facing RIGHT, 2 to 5 rows of up to 7 characters. Use letters a, b, c, d for the four colours and "." for empty.
