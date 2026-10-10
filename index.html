@@ -4173,8 +4173,9 @@ svg .fill { fill: currentColor; stroke: none; }
       { response_format: { type: 'json_object' } },
       {},
     ];
-    let why = '';
-    for (const way of ways) {
+    let why = '', first = '', restarts = 0;
+    for (let k = 0; k < ways.length; k++) {
+      const way = ways[k];
       try {
         try { await eng.resetChat(); } catch (e) { /* older engines */ }
         const r = await eng.chat.completions.create(Object.assign({
@@ -4190,9 +4191,20 @@ svg .fill { fill: currentColor; stroke: none; }
         if (ids.some((m) => nm === normName(MATS[m].name))) { why = 'it just named one of the ingredients'; continue; }
         if (!spec.type) spec.type = spec.movement || spec.sprite ? 'creature' : 'element';
         return { spec };
-      } catch (e) { why = String(e && e.message || e).slice(0, 120); }
+      } catch (e) {
+        why = String(e && e.message || e).slice(0, 120); if (!first) first = why;
+        // The phone shut the AI's graphics connection (switching apps, low memory): start it again from
+        // the copy already on the phone (no download) and ask the same way once more.
+        if (restarts < 2 && /dispos|device|lost|webgpu|gpu|memory|abort|destroy|null|undefined/i.test(why)) {
+          restarts++;
+          try { await local.engine.unload(); } catch (e2) { /* already gone */ }
+          local.engine = null; local.model = null;
+          try { eng = await loadLocal(); } catch (e2) { return { error: 'gpu' }; }
+          k--; continue;
+        }
+      }
     }
-    return { error: 'failed', why };
+    return { error: 'failed', why: first && first !== why ? first + ' / ' + why : why };
   }
   // Progress shown both in the book and in the Cauldron while it wakes up.
   function localProgressUI() {
