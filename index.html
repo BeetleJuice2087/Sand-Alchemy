@@ -1020,8 +1020,10 @@ svg .fill { fill: currentColor; stroke: none; }
   // New creatures. These use the same movements and abilities as invented ones.
   creature(M.OWL, { key: 'owl', name: 'Owl', colors: ['#a07850', '#f0e0c0'], move: 'fly',
     hint: 'A bird that loves the moon.', recipe: 'Bird + Moon Dust', desc: 'Flies at night-time speed and snaps up bugs.',
-    pal: { b: '#8a6440', w: '#f0e0c0', e: '#ffd23a' }, ax: 2, ay: 2,
-    sprite: { walk: [['.b.b.', 'bebeb', 'bbwbb', '.bbb.'], ['.b.b.', 'bebeb', 'bbwbb', 'b.b.b']] }, abil: { eatsBugs: true } });
+    pal: { b: '#8a6440', d: '#5a3e24', w: '#f0e0c0', e: '#ffd23a', y: '#ff9a2e' }, ax: 3, ay: 2,
+    // Wings on each side beat up and down; the body and feet stay put.
+    sprite: { walk: [['d.b.b.d', 'dbebebd', '.bbwbb.', '..bbb..', '..y.y..'],
+                     ['..b.b..', '.bebeb.', 'dbbwbbd', 'd.bbb.d', '..y.y..']] }, abil: { eatsBugs: true } });
   creature(M.BAT, { key: 'bat', name: 'Bat', colors: ['#4a3a5a', '#ff5a5a'], move: 'flutter',
     hint: 'A bird that turned spooky.', recipe: 'Bird + Ghost', desc: 'Flaps about in a hurry.',
     pal: { k: '#3a2a4a', e: '#ff5a5a' }, ax: 2, ay: 1,
@@ -1041,8 +1043,10 @@ svg .fill { fill: currentColor; stroke: none; }
     sprite: { walk: [['.PPP.', 'PePeP', 'ppppp', 'p.p.p'], ['.PPP.', 'PePeP', 'ppppp', '.p.p.']] } });
   creature(M.PHOENIX, { key: 'phoenix', name: 'Phoenix', colors: ['#ff6a1a', '#ffd23a'], move: 'fly',
     hint: 'A bird with a flame that never goes out.', recipe: 'Bird + Eternal Flame', desc: 'A fireproof firebird that glows and trails sparkles.',
-    pal: { r: '#ff4a1a', o: '#ff9a2e', y: '#ffd23a', e: '#fff6c2' }, ax: 3, ay: 1,
-    sprite: { walk: [['yy.....', '.oooreo', '...rr..'], ['.......', 'yoooreo', 'y..rr..']] },
+    pal: { r: '#ff3a1a', o: '#ff9a2e', y: '#ffd23a', e: '#2a1408', b: '#fff0a0' }, ax: 4, ay: 2,
+    // Wings in the middle beat up and down; the long tail trails behind, still.
+    sprite: { walk: [['...yy....', '....yo...', 'rrrooooeb', 'rr.ooo...', '.........'],
+                     ['.........', '.........', 'rrrooooeb', 'rr.oyo...', '....yy...']] },
     abil: { fireproof: true, glow: [255, 160, 60], trail: [M.SPARKLE, 0.15] } });
   creature(M.UNICORN, { key: 'unicorn', name: 'Unicorn', colors: ['#ffffff', '#ff7ae6'], move: 'walk',
     hint: 'A cow that drank a rainbow.', recipe: 'Cow + Rainbow', desc: 'Prances about leaving sparkles. Glows. Runs from dragons.',
