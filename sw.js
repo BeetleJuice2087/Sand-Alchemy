@@ -3,7 +3,7 @@
    away when online), falling back to the saved copy when offline. Fonts come
    from the saved copy and refresh in the background. Everything else (the AI
    Worker, the on-device AI download) is left alone. */
-const CACHE = 'sandalchemy-v1';
+const CACHE = 'sandalchemy-v2';
 const APP_FILES = ['./', 'index.html', 'styles.css', 'materials.js', 'sim.js', 'game.js', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'];
 
@@ -35,7 +35,7 @@ self.addEventListener('fetch', (event) => {
   }
   if (url.origin !== self.location.origin) return;
   event.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' }) // always ask GitHub whether there's a newer copy
       .then((res) => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
         return res;
