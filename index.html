@@ -342,6 +342,20 @@ svg .fill { fill: currentColor; stroke: none; }
 
 .ai-warn { color: var(--gold); font-size: 0.88rem; margin-top: 6px; }
 
+/* 3 and 4 ingredient brews: extra slots under the first two, lined up with them. */
+.brew-extra { margin-top: 0; }
+.brew-extra[hidden] { display: none; }
+.brew-extra .slot { height: 80px; }
+.brew-extra-pad { flex: none; width: 84px; }
+.brew-extra .slot-wrap[hidden], .brew-extra .plus[hidden] { display: none; }
+.brew-extra.three #wrap-d, .brew-extra.three #plus-d { visibility: hidden; display: flex; }
+.brew-extra.three #plus-d { display: inline; }
+.brew-count { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; font-size: 0.8rem; font-weight: 700; color: var(--muted); }
+.brew-count span { margin-right: 4px; }
+.count-btn { min-width: 38px; height: 30px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-weight: 800; cursor: pointer; }
+.count-btn[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: #121329; }
+.chain { display: block; margin-top: 4px; font-size: 0.82rem; color: var(--muted); white-space: pre-line; }
+
 </style>
 </head>
 <body>
@@ -473,11 +487,34 @@ svg .fill { fill: currentColor; stroke: none; }
       </div>
       <div class="brew-actions">
         <button class="primary-btn brew-go" id="brew-go" type="button" disabled>Brew</button>
-        <button class="ghost-btn dice-btn" id="brew-random" type="button" title="Pick two at random (R)" aria-label="Pick two ingredients at random">
+        <button class="ghost-btn dice-btn" id="brew-random" type="button" title="Pick at random (R)" aria-label="Pick ingredients at random">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3.5" /><circle class="pip" cx="8.5" cy="8.5" r="1.4" /><circle class="pip" cx="15.5" cy="8.5" r="1.4" /><circle class="pip" cx="12" cy="12" r="1.4" /><circle class="pip" cx="8.5" cy="15.5" r="1.4" /><circle class="pip" cx="15.5" cy="15.5" r="1.4" /></svg>
           Random
         </button>
       </div>
+    </div>
+    <div class="brew-bench brew-extra" id="brew-extra" hidden>
+      <span class="plus">+</span>
+      <div class="slot-wrap" id="wrap-c">
+        <button class="slot" id="slot-c" type="button" aria-label="Third ingredient"></button>
+        <button class="lock" id="lock-c" type="button" aria-label="Lock the third ingredient" aria-pressed="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+        </button>
+      </div>
+      <span class="plus" id="plus-d">+</span>
+      <div class="slot-wrap" id="wrap-d">
+        <button class="slot" id="slot-d" type="button" aria-label="Fourth ingredient"></button>
+        <button class="lock" id="lock-d" type="button" aria-label="Lock the fourth ingredient" aria-pressed="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path class="shackle" d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+        </button>
+      </div>
+      <span class="brew-extra-pad" aria-hidden="true"></span>
+    </div>
+    <div class="brew-count" role="radiogroup" aria-label="How many ingredients">
+      <span>Ingredients</span>
+      <button type="button" class="count-btn" data-n="2" role="radio" aria-checked="true">2</button>
+      <button type="button" class="count-btn" data-n="3" role="radio" aria-checked="false">3</button>
+      <button type="button" class="count-btn" data-n="4" role="radio" aria-checked="false">4</button>
     </div>
     <div class="brew-result" id="brew-result" aria-live="polite"></div>
     <p class="sheet-lede" id="brew-lede">Pick two ingredients, then press Brew. Tap a lock to keep one in place.</p>
@@ -3611,7 +3648,7 @@ svg .fill { fill: currentColor; stroke: none; }
   const isCreatureMat = (m) => m > 0 && m < COUNT && MATS[m] && MATS[m].creature && !MATS[m].reserved && m !== M.EGG && MATS[m].move !== 'egg';
   // What an egg hatches into: what the AI said, else a creature named in the egg's name (Frog Egg -> Frog),
   // else a creature it was brewed from, else a surprise (0).
-  function hatchTarget(spec, name, a, b) {
+  function hatchTarget(spec, name, ing) {
     let m = findByName(spec.hatches_into); if (isCreatureMat(m)) return m;
     const n = ' ' + name.toLowerCase() + ' '; let best = 0, len = 0;
     for (let k = 1; k < COUNT; k++) {
@@ -3620,29 +3657,30 @@ svg .fill { fill: currentColor; stroke: none; }
       if (cn.length > len && n.includes(' ' + cn + ' ')) { best = k; len = cn.length; }
     }
     if (best) return best;
-    return isCreatureMat(a) ? a : isCreatureMat(b) ? b : 0;
+    return ing.find(isCreatureMat) || 0;
   }
-  function eggEntry(spec, base, cols, name, a, b) {
-    const into = hatchTarget(spec, name, a, b);
+  function eggEntry(spec, base, cols, name, ing) {
+    const into = hatchTarget(spec, name, ing);
     const rows = ['.aa.', 'abaa', 'aaba', '.aa.'];
     const told = spec.movement === 'egg' && cleanText(spec.description, 90);
     const desc = told || (into ? `A little egg. Leave it be and it hatches into a ${MATS[into].name}!` : 'A little egg. Leave it be and see what hatches!');
     return Object.assign(base, { desc, kind: 'creature', density: 1, creature: true, colors: [cols[0], cols[1]], move: 'egg', traits: 'life',
       pal: { a: cols[0], b: cols[1], c: cols[2], d: cols[3] }, ax: 1, ay: 3, sprite: { walk: [rows, rows] }, abil: {}, hatches: into, layEgg: false });
   }
-  function buildEntry(spec, a, b) {
+  function buildEntry(spec, a, b, parts) {
     if (!spec || typeof spec !== 'object') return null;
     const name = cleanName(spec.name); if (!name) return null;
     const type = ['element', 'creature', 'object'].includes(spec.type) ? spec.type : 'element';
     const cols = (Array.isArray(spec.colors) ? spec.colors : []).filter(hexOk).slice(0, 4);
     while (cols.length < 4) cols.push(['#c8a0ff', '#7a5ad8', '#ffe066', '#2a2040'][cols.length]);
     const desc = cleanText(spec.description, 90) || 'Invented in the Cauldron.';
-    const recipe = `${MATS[a].name} + ${MATS[b].name}`;
+    const ing = parts && parts.length > 2 ? parts : [a, b];
+    const recipe = ing.map((m) => MATS[m].name).join(' + ');
     const has = (list, x) => Array.isArray(list) && list.map((v) => String(v).toLowerCase()).includes(x);
     const base = { key: 'inv-' + normName(name), name, desc, recipe, hint: 'Invented by the Cauldron spirit.', invented: true };
     const rgb = window.SandMats.hex(cols[0]).slice(0, 3);
     // Eggs (and cocoons) sit still and hatch, whatever the AI said about how they move.
-    if (spec.movement === 'egg' || (type !== 'object' && EGG_WORDS.test(name))) return eggEntry(spec, base, cols, name, a, b);
+    if (spec.movement === 'egg' || (type !== 'object' && EGG_WORDS.test(name))) return eggEntry(spec, base, cols, name, ing);
     if (type === 'creature') {
       const move = MOVES.includes(spec.movement) ? spec.movement : 'walk';
       // Pixel picture: up to 7 wide and 5 tall, letters a-d are the four colours.
@@ -3689,7 +3727,7 @@ svg .fill { fill: currentColor; stroke: none; }
         while (stack.length) { const [cx, cy] = stack.pop(); n++; [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => { const nx = cx + dx, ny = cy + dy, c = rows[ny] && rows[ny][nx]; if (c && c !== '.' && c !== '_' && !seen.has(ny * 64 + nx)) { seen.add(ny * 64 + nx); stack.push([nx, ny]); } }); }
         biggest = Math.max(biggest, n);
       }));
-      if (rows.length < 3 || width < 5 || filled < 12 || bottom < 3 || filled / (width * rows.length) < 0.35 || biggest < filled * 0.85) return buildEntry(Object.assign({}, spec, { type: 'element', state: spec.state || 'solid' }), a, b);
+      if (rows.length < 3 || width < 5 || filled < 12 || bottom < 3 || filled / (width * rows.length) < 0.35 || biggest < filled * 0.85) return buildEntry(Object.assign({}, spec, { type: 'element', state: spec.state || 'solid' }), a, b, parts);
       return Object.assign(base, { kind: 'stamp', density: 1, object: true, colors: [cols[0], cols[1]], rows, key2: parts, traits: 'earth' });
     }
     // An element. If it acts like one of the game's own elements (Thunderbolt -> Lightning), it copies
@@ -3731,19 +3769,28 @@ svg .fill { fill: currentColor; stroke: none; }
     return Object.assign(base, { kind: state, density, slip: 0.75, spread: state === 'liquid' ? 3 : 0, flam: props.volatile ? 1 : flammable ? 0.3 : 0,
       burn: props.volatile ? 1 : flammable ? 80 : 0, alpha: state === 'liquid' ? 230 : state === 'gas' ? 170 : 255, colors: [cols[0], cols[1]], props, traits });
   }
+  // Recipes for 3 and 4 ingredients (only ever made by the AI), keyed by the sorted ids.
+  const MULTI = new Map();
+  const multiKey = (ids) => ids.slice().sort((x, y) => x - y).join('+');
   function freeSlot() { for (let id = BUILTIN; id < COUNT; id++) if (MATS[id].reserved) return id; return 0; }
   // Add an invention to the game (from the AI, or from storage / a backup).
   function registerInvention(rec) {
     const a = rec.a, b = rec.b;
-    if (!(a > 0 && a < COUNT && b > 0 && b < COUNT) || !MATS[a] || !MATS[b] || MATS[a].reserved || MATS[b].reserved) return 0;
+    const parts = Array.isArray(rec.parts) && rec.parts.length > 2 ? rec.parts.slice(0, 4).map(Number) : null; // a 3 or 4 ingredient brew
+    const ing = parts || [a, b];
+    if (ing.some((m) => !(m > 0 && m < COUNT) || !MATS[m] || MATS[m].reserved)) return 0;
     const same = findByName(rec.spec && rec.spec.name);
-    if (same) { MAGIC[a * COUNT + b] = same; MAGIC[b * COUNT + a] = same; return same; } // the AI named something that already exists
-    const entry = buildEntry(rec.spec, a, b); if (!entry) return 0;
+    if (same) { // the AI named something that already exists
+      if (parts) MULTI.set(multiKey(parts), same); else { MAGIC[a * COUNT + b] = same; MAGIC[b * COUNT + a] = same; }
+      return same;
+    }
+    const entry = buildEntry(rec.spec, a, b, parts); if (!entry) return 0;
     const id = rec.id >= BUILTIN && rec.id < COUNT && MATS[rec.id].reserved ? rec.id : freeSlot(); if (!id) return 0;
     if (entry.layEgg) entry.abil.lays = [id, 0.0005];
-    invent(id, entry, a, b);
+    invent(id, entry, parts ? 0 : a, parts ? 0 : b);
+    if (parts) MULTI.set(multiKey(parts), id);
     window.SandSim.refresh(id);
-    inventions = inventions.filter((r) => r.id !== id).concat([{ id, a, b, spec: rec.spec }]);
+    inventions = inventions.filter((r) => r.id !== id).concat([parts ? { id, a, b, parts, spec: rec.spec } : { id, a, b, spec: rec.spec }]);
     if (!INV_GROUP.items.includes(id)) INV_GROUP.items.push(id);
     INV_GROUP.items.sort(byName);
     return id;
@@ -3757,7 +3804,7 @@ svg .fill { fill: currentColor; stroke: none; }
       const next = [];
       left.forEach((r) => {
         if (!r || typeof r !== 'object' || registerInvention(r)) return;
-        if ((MATS[r.a] && MATS[r.a].reserved) || (MATS[r.b] && MATS[r.b].reserved)) next.push(r);
+        if ((Array.isArray(r.parts) ? r.parts : [r.a, r.b]).some((m) => MATS[m] && MATS[m].reserved)) next.push(r);
       });
       if (next.length === left.length) break;
       left = next;
@@ -3891,11 +3938,15 @@ svg .fill { fill: currentColor; stroke: none; }
     catch (e) { local.error = String(e && e.message || e); throw e; }
     finally { local.loading = null; localProgressUI(); }
   }
-  async function askLocal(a, b) {
+  // The question for the AI: every ingredient on its own line.
+  function brewQuestion(ids) {
+    return ids.map((m, k) => { const d = describe(m); return `Ingredient ${k + 1}: ${d.name} (${d.type}${d.about ? ': ' + d.about : ''})`; }).join('\n') +
+      (ids.length > 2 ? `\nWhat ONE new thing do all ${ids.length} make together? Blend the ideas of every ingredient.` : '\nWhat new thing do they make together?');
+  }
+  async function askLocal(ids) {
     let eng;
     try { eng = await loadLocal(); } catch (e) { return { error: 'gpu' }; }
-    const A = describe(a), B = describe(b);
-    const user = `Ingredient 1: ${A.name} (${A.type}${A.about ? ': ' + A.about : ''})\nIngredient 2: ${B.name} (${B.type}${B.about ? ': ' + B.about : ''})\nWhat new thing do they make together?`;
+    const user = brewQuestion(ids);
     for (let tries = 0; tries < 2; tries++) {
       try {
         const r = await eng.chat.completions.create({
@@ -3905,7 +3956,7 @@ svg .fill { fill: currentColor; stroke: none; }
         });
         const spec = JSON.parse(r.choices[0].message.content);
         const nm = normName(spec && spec.name);
-        if (nm && nm !== normName(MATS[a].name) && nm !== normName(MATS[b].name) && cleanName(spec.name)) return { spec };
+        if (nm && !ids.some((m) => nm === normName(MATS[m].name)) && cleanName(spec.name)) return { spec };
       } catch (e) { /* try once more */ }
     }
     return { error: 'failed' };
@@ -3945,7 +3996,7 @@ svg .fill { fill: currentColor; stroke: none; }
     } catch (e) { note('Couldn\u2019t remove it. Try again in a moment.'); }
     btn.textContent = 'Remove this download'; btn.disabled = false; localProgressUI();
   }
-  async function askAI(a, b) { return aiSettings.mode === 'device' ? askLocal(a, b) : askCloud(a, b); }
+  async function askAI(ids) { return aiSettings.mode === 'device' ? askLocal(ids) : askCloud(ids); }
 
   // A memory warning under the model picker for the bigger downloads.
   const MEM_NOTES = {
@@ -3988,25 +4039,38 @@ svg .fill { fill: currentColor; stroke: none; }
     try { const r = await fetch(aiUrl() + '/', { cache: 'no-store' }); const j = await r.json(); note(j && j.ok ? `Connected! ${j.left != null ? j.left + ' new inventions left today.' : ''}` : 'That address answered, but not like a Sand Alchemy Worker.'); }
     catch (e) { note('Couldn\u2019t reach that address.'); }
   });
-  async function askCloud(a, b) {
+  async function askCloud(ids) {
     const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 25000);
     try {
-      const r = await fetch(aiUrl() + '/invent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: 1, a: describe(a), b: describe(b) }), signal: ctl.signal });
+      const body = { v: 2, a: describe(ids[0]), b: describe(ids[1]), items: ids.map(describe) };
+      const r = await fetch(aiUrl() + '/invent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctl.signal });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) return { error: j.error || 'busy' };
+      if (ids.length > 2 && j.n !== ids.length) return { error: 'oldworker' }; // an older Worker only looked at the first two
       return { spec: j.spec };
     } catch (e) { return { error: 'offline' }; } finally { clearTimeout(timer); }
   }
-  let slotA = 0, slotB = 0, lockA = false, lockB = false;
+  // Up to four ingredients. The first two always show; 3 and 4 add slots underneath.
+  const KEYS = ['a', 'b', 'c', 'd'], NTH = ['first', 'second', 'third', 'fourth'];
+  const slots = [0, 0, 0, 0], locks = [false, false, false, false];
+  let nSlots = 2;
+  try { nSlots = Math.max(2, Math.min(4, Number(localStorage.getItem('sandalchemy.brewn')) || 2)); } catch (e) { /* default */ }
+  const used = () => slots.slice(0, nSlots);
   function openBrew() {
     // Locked ingredients stay in place between brews; unlocked ones start fresh.
-    if (!lockA) slotA = 0;
-    if (!lockB) slotB = 0;
+    for (let k = 0; k < 4; k++) if (!locks[k]) slots[k] = 0;
     $('#brew-result').innerHTML = '';
     resetSearch($('#ing-search'));
     renderIngredients(); renderSlots();
     $('#brew').hidden = false;
   }
+  function setCount(n) {
+    nSlots = n; try { localStorage.setItem('sandalchemy.brewn', String(n)); } catch (e) { /* fine */ }
+    for (let k = n; k < 4; k++) { slots[k] = 0; locks[k] = false; }
+    $('#brew-result').innerHTML = '';
+    renderSlots(); markPicked();
+  }
+  document.querySelectorAll('.count-btn').forEach((b) => b.addEventListener('click', () => { if (!thinking) setCount(Number(b.dataset.n)); }));
   function renderIngredients() {
     const g = $('#ing-grid'); g.innerHTML = '';
     GROUPS.forEach((grp) => {
@@ -4026,7 +4090,7 @@ svg .fill { fill: currentColor; stroke: none; }
   function addIngredient(g, m) {
     {
       const b = document.createElement('button');
-      b.type = 'button'; b.className = 'ing' + (m === slotA || m === slotB ? ' picked' : ''); b.dataset.m = m;
+      b.type = 'button'; b.className = 'ing' + (slots.slice(0, nSlots).includes(m) ? ' picked' : ''); b.dataset.m = m;
       const sw = document.createElement('i'); sw.className = 'sw'; sw.setAttribute('style', swatchStyle(m));
       const s = document.createElement('span'); s.textContent = MATS[m].name; if (MATS[m].name.split(' ').some((p) => p.length > 10)) s.className = 'long';
       b.append(sw, s);
@@ -4034,62 +4098,65 @@ svg .fill { fill: currentColor; stroke: none; }
       g.append(b);
     }
   }
+  function markPicked() { document.querySelectorAll('.ing').forEach((b) => b.classList.toggle('picked', used().includes(Number(b.dataset.m)))); }
   function pickIngredient(m) {
-    if (slotA === m) { if (lockA) return nudgeLock('a'); slotA = 0; }
-    else if (slotB === m) { if (lockB) return nudgeLock('b'); slotB = 0; }
-    else if (!slotA && !lockA) slotA = m;
-    else if (!slotB && !lockB) slotB = m;
-    else if (lockA && lockB) return nudgeLock('a', 'b');
-    else if (lockA) slotB = m;                        // the locked one stays, swap the other
-    else if (lockB) slotA = m;
-    else { slotA = slotB; slotB = m; }
+    const at = used().indexOf(m);
+    if (at >= 0) { if (locks[at]) return nudgeLock(KEYS[at]); slots[at] = 0; } // tap again to take it out
+    else {
+      const empty = used().findIndex((v, k) => !v && !locks[k]);
+      if (empty >= 0) slots[empty] = m;
+      else {
+        // All full: the unlocked ones shuffle along and the newest goes in the last free place.
+        const open = []; for (let k = 0; k < nSlots; k++) if (!locks[k]) open.push(k);
+        if (!open.length) return nudgeLock(...KEYS.slice(0, nSlots));
+        for (let q = 0; q < open.length - 1; q++) slots[open[q]] = slots[open[q + 1]];
+        slots[open[open.length - 1]] = m;
+      }
+    }
     $('#brew-result').innerHTML = '';
-    renderSlots();
-    document.querySelectorAll('.ing').forEach((b) => b.classList.toggle('picked', Number(b.dataset.m) === slotA || Number(b.dataset.m) === slotB));
+    renderSlots(); markPicked();
   }
-  // The dice: fill the unlocked slot(s) with random ingredients you've found.
+  // The dice: fill the unlocked slots with random ingredients you've found.
   function randomPick() {
     if (thinking) return;
-    if (lockA && lockB) return nudgeLock('a', 'b');
+    const open = []; for (let k = 0; k < nSlots; k++) if (!locks[k]) open.push(k);
+    if (!open.length) return nudgeLock(...KEYS.slice(0, nSlots));
     const pool = [...new Set(GROUPS.flatMap((grp) => grp.items))].filter((m) => world.discovered[m]);
-    if (pool.length < 2) return;
-    const any = (not) => { let m; do { m = pool[ri(pool.length)]; } while (m === not); return m; };
-    if (!lockA) slotA = any(lockB ? slotB : 0);
-    if (!lockB) slotB = any(slotA);
+    if (pool.length < nSlots) return;
+    open.forEach((k) => { slots[k] = 0; });
+    open.forEach((k) => { let m; do { m = pool[ri(pool.length)]; } while (used().includes(m)); slots[k] = m; });
     $('#brew-result').innerHTML = '';
-    renderSlots();
-    document.querySelectorAll('.ing').forEach((b) => b.classList.toggle('picked', Number(b.dataset.m) === slotA || Number(b.dataset.m) === slotB));
+    renderSlots(); markPicked();
     const d = $('#brew-random'); d.classList.remove('roll'); void d.offsetWidth; d.classList.add('roll');
-    [['#slot-a', lockA], ['#slot-b', lockB]].forEach(([sel, locked]) => { if (locked) return; const s = $(sel); s.classList.remove('rolled'); void s.offsetWidth; s.classList.add('rolled'); });
+    open.forEach((k) => { const s = $('#slot-' + KEYS[k]); s.classList.remove('rolled'); void s.offsetWidth; s.classList.add('rolled'); });
   }
   $('#brew-random').addEventListener('click', randomPick);
   function nudgeLock(...keys) {
     keys.forEach((k) => { const l = $('#lock-' + k); l.classList.remove('nudge'); void l.offsetWidth; l.classList.add('nudge'); });
   }
-  function toggleLock(k) {
-    if (k === 'a') { if (!slotA) return; lockA = !lockA; } else { if (!slotB) return; lockB = !lockB; }
-    renderSlots();
-  }
+  function toggleLock(k) { if (!slots[k]) return; locks[k] = !locks[k]; renderSlots(); }
   function renderSlots() {
-    if (!slotA) lockA = false;
-    if (!slotB) lockB = false;
-    [['a', lockA], ['b', lockB]].forEach(([k, on]) => {
-      const l = $('#lock-' + k), m = k === 'a' ? slotA : slotB;
+    const ex = $('#brew-extra'); ex.hidden = nSlots < 3; ex.classList.toggle('three', nSlots === 3);
+    document.querySelectorAll('.count-btn').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.n) === nSlots)));
+    $('#brew-lede').textContent = nSlots === 2 ? 'Pick two ingredients, then press Brew. Tap a lock to keep one in place.'
+      : `Pick ${nSlots === 3 ? 'three' : 'four'} ingredients, then press Brew. Bigger brews can turn out amazing\u2026 or a bit broken!`;
+    const firstEmpty = used().findIndex((v) => !v);
+    for (let k = 0; k < 4; k++) {
+      if (!slots[k]) locks[k] = false;
+      const key = KEYS[k], m = slots[k], on = locks[k], l = $('#lock-' + key), el = $('#slot-' + key);
       l.hidden = !m; l.classList.toggle('on', on); l.setAttribute('aria-pressed', String(on));
-      l.setAttribute('aria-label', (on ? 'Unlock' : 'Lock') + (k === 'a' ? ' the first' : ' the second') + ' ingredient');
-      $('#slot-' + k).classList.toggle('locked', on);
-    });
-    [['#slot-a', slotA], ['#slot-b', slotB]].forEach(([sel, m], k) => {
-      const el = $(sel); el.innerHTML = '';
+      l.setAttribute('aria-label', (on ? 'Unlock' : 'Lock') + ' the ' + NTH[k] + ' ingredient');
+      el.classList.toggle('locked', on);
+      el.innerHTML = '';
       el.classList.toggle('filled', !!m);
-      el.classList.toggle('next', !m && (k === 0 || slotA));
+      el.classList.toggle('next', !m && k === firstEmpty);
       if (m) {
         const sw = document.createElement('i'); sw.className = 'sw'; sw.setAttribute('style', swatchStyle(m));
         const s = document.createElement('span'); s.textContent = MATS[m].name;
         el.append(sw, s);
-      } else el.textContent = k === 0 ? 'Pick one' : 'Pick another';
-    });
-    $('#brew-go').disabled = !(slotA && slotB) || thinking;
+      } else el.textContent = k === 0 ? 'Pick one' : k === 1 ? 'Pick another' : 'And another';
+    }
+    $('#brew-go').disabled = used().some((v) => !v) || thinking;
   }
   /* What two things make when they touch in the world. Most come straight
      from the reaction table; a few world behaviours are listed by hand. */
@@ -4113,11 +4180,30 @@ svg .fill { fill: currentColor; stroke: none; }
     return use;
   }
   let thinking = false;
+  const listNames = (ids) => { const n = ids.map((m) => MATS[m].name); return n.length < 3 ? n.join(' and ') : n.slice(0, -1).join(', ') + ' and ' + n[n.length - 1]; };
+  /* Without the AI, a big brew mixes in order: the first two, then that result with the
+     next one, and so on. Each step uses a recipe, then what they make in the world, then
+     plain trait mixing. Returns the steps so the player can see how it went. */
+  function chainMix(ids) {
+    let cur = ids[0], fromRecipe = true; const steps = [];
+    for (let k = 1; k < ids.length; k++) {
+      const nx = ids[k];
+      let out = MAGIC[cur * COUNT + nx], how = 'recipe';
+      if (!out) { const wp = worldProducts(cur, nx); if (wp.length) { out = wp[0]; how = 'world'; } }
+      if (!out) { const t = traitMix(cur, nx); if (t < 0) return { steps, end: 'void', at: nx }; if (t > 0) { out = t; how = 'mix'; } }
+      if (!out) return { steps, end: 'fizzle', at: nx, cur };
+      if (how !== 'recipe') fromRecipe = false;
+      steps.push({ with: nx, out, how }); cur = out;
+    }
+    return { steps, end: 'ok', out: cur, fromRecipe: steps.length && steps[steps.length - 1].how === 'recipe' };
+  }
   function brew(noAI) {
-    if (!slotA || !slotB || thinking) return;
+    if (used().some((v) => !v) || thinking) return;
+    if (nSlots > 2) return brewMany(noAI);
+    const slotA = slots[0], slotB = slots[1];
     const out = MAGIC[slotA * COUNT + slotB];
     // No recipe and nothing they make in the world: ask the Cauldron spirit to invent something.
-    if (!out && noAI !== true && aiReady() && !worldProducts(slotA, slotB).length && traitMix(slotA, slotB) >= 0) { inventFor(slotA, slotB); return; }
+    if (!out && noAI !== true && aiReady() && !worldProducts(slotA, slotB).length && traitMix(slotA, slotB) >= 0) { inventFor([slotA, slotB]); return; }
     const res = document.createElement('div'); res.className = 'res';
     const sw = document.createElement('i'); sw.className = 'sw';
     const txt = document.createElement('div');
@@ -4185,20 +4271,58 @@ svg .fill { fill: currentColor; stroke: none; }
     }
     const r = $('#brew-result'); r.innerHTML = ''; r.append(res);
   }
-  async function inventFor(a, b) {
+  function resultCard(m, small, title, text, extra) {
+    const res = document.createElement('div'); res.className = 'res';
+    const sw = document.createElement('i'); sw.className = 'sw';
+    const txt = document.createElement('div');
+    const sm = document.createElement('small'), b = document.createElement('b'), s = document.createElement('span');
+    sm.textContent = small; b.textContent = title; s.textContent = text; txt.append(sm, b, s);
+    if (extra) { const c = document.createElement('span'); c.className = 'chain'; c.textContent = extra; txt.append(c); }
+    if (m > 0) sw.setAttribute('style', swatchStyle(m)); else { sw.className = 'sw unknown'; sw.textContent = m === -1 ? '\u2026' : '?'; }
+    res.append(sw, txt);
+    if (m > 0 && world.discovered[m]) res.append(useButton(m));
+    return res;
+  }
+  function brewMany(noAI) {
+    const ids = used(), key = multiKey(ids);
+    const known = MULTI.get(key);
+    if (!known && noAI !== true && aiReady()) { inventFor(ids); return; }
+    const r = $('#brew-result'); r.innerHTML = '';
+    if (known) {
+      const isNew = !world.discovered[known];
+      if (isNew) { world.discovered[known] = 1; discovered(known); }
+      const card = resultCard(known, isNew ? '\u2728 New invention!' : 'Already invented', MATS[known].name, isNew ? (MATS[known].desc || 'Added to your toolbar.') : `${listNames(ids)} brew ${MATS[known].name}.`);
+      card.classList.add(isNew ? 'win' : 'known'); if (isNew) card.classList.add('invent');
+      r.append(card); renderIngredients(); return;
+    }
+    // Mix them in order and show how it went.
+    const c = chainMix(ids);
+    const trail = c.steps.map((st, k) => (k ? '+ ' : MATS[ids[0]].name + ' + ') + `${MATS[st.with].name} \u2192 ${MATS[st.out].name}`)
+      .concat(c.end === 'ok' || !c.at ? [] : [`+ ${MATS[c.at].name} \u2192 ${c.end === 'void' ? 'swallowed!' : 'fizzle'}`]).join('\n');
+    if (c.end === 'void') { const card = resultCard(M.VOID, 'Swallowed', 'Into the Void', `The Void swallowed the whole brew when ${MATS[c.at].name} went in.`, trail); r.append(card); return; }
+    if (c.end === 'fizzle') { r.append(resultCard(0, 'Nothing happened', 'Just a fizzle\u2026', `It all fizzled out when ${MATS[c.at].name} went in.`, trail)); return; }
+    const out = c.out, isNew = !world.discovered[out];
+    if (isNew && !c.fromRecipe) { r.append(resultCard(-1, 'Something stirs\u2026', 'Not yet', `This brew is heading towards something you haven't found yet. Keep exploring!`, trail)); return; }
+    if (isNew) { world.discovered[out] = 1; discovered(out); }
+    const card = resultCard(out, isNew ? 'New discovery!' : 'Brewed into', MATS[out].name, isNew ? (MATS[out].desc || 'Added to your toolbar.') : `${listNames(ids)} brew into ${MATS[out].name}, one step at a time.`, trail);
+    card.classList.add(isNew ? 'win' : 'known');
+    r.append(card); if (isNew) renderIngredients();
+  }
+  async function inventFor(ids) {
     thinking = true; $('#brew-go').disabled = true;
     const r = $('#brew-result');
     r.innerHTML = '<div class="res thinking"><i class="sw brewing"></i><div><small>The Cauldron bubbles\u2026</small><b>Inventing something new</b><span>The Cauldron spirit is dreaming up what ' +
-      escapeHtml(MATS[a].name) + ' and ' + escapeHtml(MATS[b].name) + ' make together.</span></div></div>';
-    const got = await askAI(a, b);
+      escapeHtml(listNames(ids)) + ' make together.</span></div></div>';
+    const got = await askAI(ids);
     let id = 0;
-    if (got.spec) { id = registerInvention({ a, b, spec: got.spec }); if (id) { saveInventions(); renderPalette(); writeSaveSoon(); } }
+    if (got.spec) { id = registerInvention({ a: ids[0], b: ids[1], parts: ids.length > 2 ? ids.slice() : undefined, spec: got.spec }); if (id) { saveInventions(); renderPalette(); writeSaveSoon(); } }
     thinking = false;
-    if (slotA !== a || slotB !== b) { renderSlots(); return; } // they picked something else meanwhile
+    if (multiKey(used()) !== multiKey(ids) || used().length !== ids.length) { renderSlots(); return; } // they picked something else meanwhile
     renderSlots();
     brew(true);
     if (!id) {
-      const why = got.error === 'limit' ? 'The Cauldron spirit is resting for today (daily limit reached).' : got.error === 'gpu' ? 'Couldn\u2019t start the AI on this device.' : got.error === 'offline' ? 'Couldn\u2019t reach the Cauldron spirit (offline?).' : 'The Cauldron spirit couldn\u2019t think of anything this time.';
+      const why = got.error === 'limit' ? 'The Cauldron spirit is resting for today (daily limit reached).' : got.error === 'gpu' ? 'Couldn\u2019t start the AI on this device.'
+        : got.error === 'offline' ? 'Couldn\u2019t reach the Cauldron spirit (offline?).' : got.error === 'oldworker' ? 'Your Worker needs updating to invent 3 or 4 ingredient brews.' : 'The Cauldron spirit couldn\u2019t think of anything this time.';
       const n = document.createElement('p'); n.className = 'ai-note'; n.textContent = why + ' Here\u2019s a normal mix instead.';
       $('#brew-result').append(n);
     }
@@ -4211,10 +4335,10 @@ svg .fill { fill: currentColor; stroke: none; }
   $('#btn-pot').addEventListener('click', openBrew);
   $('#brew-close').addEventListener('click', () => { $('#brew').hidden = true; });
   $('#brew-go').addEventListener('click', () => brew());
-  $('#slot-a').addEventListener('click', () => { if (slotA) pickIngredient(slotA); });
-  $('#slot-b').addEventListener('click', () => { if (slotB) pickIngredient(slotB); });
-  $('#lock-a').addEventListener('click', () => toggleLock('a'));
-  $('#lock-b').addEventListener('click', () => toggleLock('b'));
+  KEYS.forEach((key, k) => {
+    $('#slot-' + key).addEventListener('click', () => { if (slots[k]) pickIngredient(slots[k]); });
+    $('#lock-' + key).addEventListener('click', () => toggleLock(k));
+  });
 
   /* ---------------- Backup & restore ----------------
      The whole save as one text code: "SAND1." + base64url(gzip(JSON)),
