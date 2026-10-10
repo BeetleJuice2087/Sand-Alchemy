@@ -3637,6 +3637,99 @@ svg .fill { fill: currentColor; stroke: none; }
     fly: ['a.a..', '.aaab', '.....'], flutter: ['a.a', '.b.', 'a.a'], swim: ['.aa..', 'aaaab', '.aa..'], drift: ['.aa.', 'aaaa', 'b.b.', '.b.b'],
     burrow: ['.....', 'aabab'], slither: ['..aa..ab', 'aa..aa..'], default: ['...aa', 'aaaab', 'a.a.a'],
   };
+  /* ---- Drawing creatures the AI didn't draw well ----
+     The AI likes to copy the example in its instructions, so lots of creatures came out
+     as the same little pig. When that happens (or the drawing is broken) the game draws
+     its own picture from the creature's name: the right kind of body, with small changes
+     picked from the name so no two look quite the same. Letters: a body, b head or
+     second colour, c legs and details, d eyes. */
+  const OLD_EXAMPLES = [['.....aa', 'aaaaaab', 'aaaaaa.', '.c..c..'], ['...aa', 'aaaab', 'a.a.a']];
+  const maskOf = (rows) => { const s = new Set(); rows.forEach((r, y) => [...r].forEach((ch, x) => { if (ch !== '.') s.add(y * 16 + x); })); return s; };
+  function copiedExample(rows) {
+    const m = maskOf(rows);
+    return OLD_EXAMPLES.some((ex) => { const e = maskOf(ex); let both = 0; m.forEach((k) => { if (e.has(k)) both++; }); return both / (m.size + e.size - both) >= 0.7; });
+  }
+  function seeded(text) { let h = 2166136261; for (const ch of String(text)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return (n) => { h = Math.imul(h ^ (h >>> 15), 2246822507); h ^= h >>> 13; return ((h >>> 0) % n); }; }
+  const BODY_WORDS = [ // matched at the start of words, so "howls" isn't an owl
+    ['walker', /\b(dog|pup|puppy|cat|kitten|kitty|fox|wolf|horse|pony|deer|cow|pig|piglet|goat|sheep|lamb|lion|tiger|bear|cub|rabbit|bunny|mouse|rat|hamster|lizard|dino|turtle|tortoise|frog|toad|camel|llama|elephant|rhino|hippo|unicorn|yak|boar|otter|ferret|raccoon|skunk|hedgehog)/],
+    ['serpent', /\b(snake|serpent|worm|eel|wyrm|naga|noodle|centipede|millipede)/], ['fish', /\b(fish|shark|whale|minnow|guppy|carp|trout|salmon|dolphin|orca|ray|piranha|goldfish)/],
+    ['flutter', /\b(butterfly|butterflies|moth|fairy|fairies|pixie|bee|wasp|dragonfly|firefly|sprite)/], ['bird', /\b(bird|owl|crow|raven|parrot|eagle|hawk|duck|goose|swan|chick|robin|sparrow|pigeon|flamingo|phoenix|griffin|bat)\b/],
+    ['spider', /\b(spider|crab|scorpion|octopus|octo|squid|tarantula)/], ['bug', /\b(bug|beetle|ant|ladybug|tick|mite|cricket|grasshopper|roach|weevil|scarab|snail|slug)\b/],
+    ['blob', /\b(slime|blob|jelly|goo|ooze|puddle|gel|mochi|pudding|marshmallow)/],
+    ['biped', /\b(golem|robot|knight|man|men|person|wizard|witch|elf|gnome|goblin|troll|yeti|zombie|ghoul|skeleton|ninja|king|queen|imp|monkey|ape|gorilla|kid|boy|girl|soldier|pirate|warrior|giant|ogre|mummy|vampire|alien)\b/],
+  ];
+  function bodyType(name, desc, move) {
+    const n = name.toLowerCase(), t = (name + ' ' + desc).toLowerCase();
+    for (const [k, re] of BODY_WORDS) if (re.test(n)) return k; // the name decides first
+    for (const [k, re] of BODY_WORDS) if (re.test(t)) return k;
+    return { fly: 'bird', flutter: 'flutter', swim: 'fish', burrow: 'serpent', slither: 'serpent', drift: 'blob', paddle: 'bird' }[move] || 'walker';
+  }
+  function drawCreature(name, desc, move) {
+    const r = seeded(name), kind = bodyType(name, desc, move);
+    const grid = (w, h) => Array.from({ length: h }, () => Array(w).fill('.'));
+    const out = (gr) => gr.map((row) => row.join(''));
+    if (kind === 'walker') { // four legs: long or short, tall or flat, maybe a tail, ears, a long neck or spots
+      const L = 5 + r(3), H = 1 + r(2), ears = r(2), neck = r(5) === 0, tail = r(3) > 0, spots = r(3) === 0;
+      const top = ears ? 1 : 0, bodyY = top + (neck ? 2 : 1), gr = grid(L + 2, bodyY + H + 1);
+      if (ears) gr[0][L] = 'b';
+      gr[top][L] = 'b'; gr[top][L + 1] = 'd';
+      if (neck) gr[top + 1][L] = 'a';
+      for (let y = bodyY; y < bodyY + H; y++) for (let x = 0; x < L; x++) gr[y][x] = spots && (x + y) % 3 === 0 ? 'b' : 'a';
+      gr[bodyY][L] = 'a';
+      if (tail) gr[bodyY - 1][0] = 'a';
+      (L >= 6 ? [1, 3, L - 3, L - 1] : [0, L - 1]).forEach((x) => { gr[bodyY + H][x] = 'c'; });
+      return out(gr);
+    }
+    if (kind === 'biped') { // stands up: head, arms, legs
+      const wide = r(2), tall = r(2), w = wide ? 5 : 4, gr = grid(w, tall ? 5 : 4), bw = wide ? 3 : 2;
+      gr[0][1] = 'b'; gr[0][2] = 'd'; if (wide) gr[0][3] = 'b';
+      (tall ? [1, 2, 3] : [1, 2]).forEach((y, k) => { for (let x = 1; x < 1 + bw; x++) gr[y][x] = 'a'; if (k === 0) { gr[y][0] = 'c'; gr[y][w - 1] = 'c'; } });
+      const ly = gr.length - 1; gr[ly][1] = 'c'; gr[ly][bw] = 'c';
+      return out(gr);
+    }
+    if (kind === 'bug') { // round shell, little legs, a head in front
+      const L = 3 + r(3), gr = grid(L + 1, 3);
+      for (let x = 1; x < L; x++) gr[0][x] = 'a';
+      for (let x = 0; x < L; x++) gr[1][x] = r(3) === 0 ? 'b' : 'a';
+      gr[1][L] = 'd'; if (r(2)) gr[0][L] = 'c';
+      for (let x = 0; x < L; x += 2) gr[2][x] = 'c';
+      return out(gr);
+    }
+    if (kind === 'spider') { // legs out on both sides
+      const L = 3 + r(2), gr = grid(L + 3, 3);
+      for (let x = 0; x < L + 3; x += 2) { gr[0][x] = 'c'; gr[2][x] = 'c'; }
+      for (let x = 1; x <= L; x++) gr[1][x] = 'a';
+      gr[1][L + 1] = 'd';
+      return out(gr);
+    }
+    if (kind === 'serpent') { // long and wiggly
+      const L = 6 + r(3), gr = grid(L + 1, 2);
+      for (let x = 0; x < L; x++) { const k = Math.floor(x / 2) % 2; gr[k][x] = x % 4 === 0 && r(2) ? 'b' : 'a'; if (x % 2 === 1 && x < L - 1) gr[1 - k][x] = 'a'; } // joined-up wiggles
+      gr[0][L] = 'd'; gr[0][L - 1] = 'a';
+      return out(gr);
+    }
+    if (kind === 'fish') { // tail fin, body, eye
+      const L = 3 + r(4), h = r(2) ? 4 : 3, gr = grid(L + 2, h);
+      gr[0][0] = 'c'; gr[h - 1][0] = 'c'; gr[1][1] = 'c';
+      for (let y = 0; y < h; y++) for (let x = 2; x < L + 2; x++) { const edge = y === 0 || y === h - 1; if (!edge || (x > 2 && x < L + 1)) gr[y][x] = 'a'; }
+      gr[1][L] = 'd'; if (r(2)) gr[0][Math.floor(L / 2) + 1] = 'b';
+      return out(gr);
+    }
+    if (kind === 'bird') { // wing on top, body, head and beak
+      const L = 3 + r(3), gr = grid(L + 2, 3);
+      for (let x = 1; x < Math.min(4, L); x++) gr[0][x] = 'b';
+      for (let x = 0; x <= L; x++) gr[1][x] = 'a';
+      gr[0][L] = 'a'; gr[0][L + 1] = 'c'; // head up front with a beak
+      gr[2][Math.floor(L / 2)] = 'c';
+      return out(gr);
+    }
+    if (kind === 'flutter') return r(2) ? ['aa.aa', 'abdba', '.a.a.'] : ['a.a', '.d.', 'a.a']; // big wings
+    const w = 5 + r(2) * 2, gr = grid(w, 3); // a blob: a dome with eyes
+    for (let x = 1; x < w - 1; x++) gr[0][x] = 'a';
+    for (let x = 0; x < w; x++) { gr[1][x] = 'a'; gr[2][x] = r(4) === 0 ? 'b' : 'a'; }
+    gr[1][Math.floor(w / 2) - 1] = 'd'; gr[1][Math.floor(w / 2) + 1] = 'd';
+    return out(gr);
+  }
   // Turn the AI's answer into a safe material entry (or null if it doesn't make sense).
   const NOT_LIKE = new Set([M.CAULDRON, M.SPARKLE, M.ROCKET]);
   function likeOk(m) { return isBuiltin(m) && !MATS[m].creature && !MATS[m].object && !MATS[m].reserved && KIND[m] !== K.empty && !NOT_LIKE.has(m); }
@@ -3685,11 +3778,13 @@ svg .fill { fill: currentColor; stroke: none; }
       const move = MOVES.includes(spec.movement) ? spec.movement : 'walk';
       // Pixel picture: up to 7 wide and 5 tall, letters a-d are the four colours.
       let rows = Array.isArray(spec.sprite) ? spec.sprite.map((r) => String(r).replace(/[^abcd.]/g, '.').slice(0, 7)).filter((r) => r.length).slice(0, 5) : [];
-      const width = Math.max(0, ...rows.map((r) => r.length));
+      let width = Math.max(0, ...rows.map((r) => r.length));
       rows = rows.map((r) => r.padEnd(width, '.'));
       while (rows.length && !/[abcd]/.test(rows[0])) rows.shift();
       while (rows.length && !/[abcd]/.test(rows[rows.length - 1])) rows.pop();
-      if (rows.join('').replace(/\./g, '').length < 3) rows = FALLBACK_SPRITES[move] || FALLBACK_SPRITES.default;
+      // A broken drawing, or a copy of the old example: draw it ourselves from the name.
+      if (rows.join('').replace(/\./g, '').length < 4 || copiedExample(rows)) rows = drawCreature(name, desc, move);
+      width = Math.max(...rows.map((r) => r.length)); rows = rows.map((r) => r.padEnd(width, '.'));
       const ground = !['fly', 'flutter', 'swim', 'drift'].includes(move);
       const last = rows.length - 1, rot = (r) => r.slice(1) + r[0];
       const frameB = rows.map((r, i) => (ground ? i === last : i === 0) ? rot(r) : r);
@@ -3883,7 +3978,7 @@ svg .fill { fill: currentColor; stroke: none; }
     - hatches_into: only for movement "egg": the name of the creature that hatches out (like "Frog" for a Frog Egg).
     - abilities: any that fit, from: ${ABILITIES.join(', ')}.
     - sprite: a tiny side-view pixel picture facing RIGHT, 2 to 5 rows of up to 7 characters. Use letters a, b, c, d for the four colours and "." for empty.
-      Example (a little pig): [".....aa", "aaaaaab", "aaaaaa.", ".c..c.."]
+      Draw THIS creature’s own shape (long, round, tall, winged, many-legged...); every creature should look different. Format examples, not to copy: a snail [".bb...", "bbba.d", "aaaaa."], a bat ["a...a", "aabaa", ".a.a."], a robot [".bd.", "caac", ".aa.", ".c.c"]
     For an object also give:
     - build: up to 12 rows of up to 17 characters, drawn as seen from the side, bottom row on the ground. Use one letter per material and "." for empty.
     - parts: which material each letter is, chosen ONLY from: ${BUILD_MATERIALS.join(', ')}.
