@@ -448,7 +448,7 @@ svg .fill { fill: currentColor; stroke: none; }
         <div class="row ai-url-row"><input type="url" id="ai-url" autocomplete="off" spellcheck="false" aria-label="Worker address"><button class="ghost-btn" id="ai-test" type="button">Test</button></div>
       </details>
     </section>
-    <p class="game-ver" id="game-ver">Game version: Oct 10, update 6</p>
+    <p class="game-ver" id="game-ver">Game version: Oct 10, update 8</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -1590,6 +1590,8 @@ svg .fill { fill: currentColor; stroke: none; }
       this.discovered = new Uint8Array(COUNT);
       this.onDiscover = null;
       this.pendingBlasts = [];
+      this.flying = [];         // grains thrown by explosions, flying through the air
+      this.blastsNow = 0;       // explosions this frame: a chain reaction throws things harder
       this.creatures = [];
       this.magnets = []; this.hasSticky = false; this.hasBouncy = false;
       for (let i = 0; i < n; i++) this.shade[i] = ri(256);
@@ -1693,6 +1695,60 @@ svg .fill { fill: currentColor; stroke: none; }
         if (b === M.WATER) { if (rnd() < 0.5) this.put(j, M.STEAM); continue; }
         if (rnd() < 0.45) this.put(j, M.FIRE, 6 + ri(14)); else if (b !== M.CRYSTAL) this.t[j] = 0;
       }
+      this.shove(cx, cy, r);
+    }
+    /* The blast wave: loose stuff (sand, dirt, water, debris) is thrown outwards and arcs back down.
+       Every explosion in the same frame adds power, so a big pile of gunpowder throws much further. */
+    shove(cx, cy, r) {
+      const power = Math.min(4, 1 + this.blastsNow * 0.12); this.blastsNow++;
+      const R = Math.round(r + 5 + 5 * power), w = this.w, h = this.h, t = this.t, fly = this.flying;
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const d2 = dx * dx + dy * dy; if (d2 > R * R || fly.length > 3500) continue;
+        const x = cx + dx, y = cy + dy; if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const j = y * w + x, m = t[j];
+        if (!m || BOUNCE[m]) continue;
+        const k = KIND[m]; if (k !== K.powder && k !== K.liquid && k !== K.skypowder) continue;
+        const d = Math.sqrt(d2) || 0.5, near = d <= r ? 1 : 1 - (d - r) / (R - r + 1); // 1 at the blast, 0 at the edge
+        if (rnd() > 0.25 + 0.75 * near) continue;
+        const speed = Math.min(7, (0.6 + 3.2 * near) * power * (0.7 + rnd() * 0.6));
+        const vx = dx / d * speed + (rnd() - 0.5) * 0.6, vy = dy / d * speed - (0.6 + rnd() * 0.8) * power * near; // a bit of lift
+        fly.push({ m, sk: this.hasSkins ? this.skin[j] : 0, l: this.life[j], s: this.shade[j], x, y, vx, vy });
+        t[j] = 0; this.skin[j] = 0; this.life[j] = 0;
+      }
+    }
+    /* Move the thrown grains: gravity pulls them down, and they land on the first thing they hit. */
+    stepFlying() {
+      const w = this.w, h = this.h, t = this.t, list = this.flying, keep = [];
+      const open = (m) => m === 0 || KIND[m] === K.gas || KIND[m] === K.fire || KIND[m] === K.spark || KIND[m] === K.cloud;
+      for (const p of list) {
+        p.vy = Math.min(p.vy + 0.16, 6); p.vx *= 0.985;
+        const n = Math.max(1, Math.ceil(Math.max(Math.abs(p.vx), Math.abs(p.vy))));
+        let landed = false;
+        for (let k = 0; k < n; k++) {
+          let nx = p.x + p.vx / n, ny = p.y + p.vy / n;
+          if (nx < 0) { nx = 0; p.vx = -p.vx * 0.4; } else if (nx > w - 1) { nx = w - 1; p.vx = -p.vx * 0.4; }
+          if (ny < 0) { ny = 0; p.vy = 0; }
+          const cx = Math.round(nx), cy = Math.round(ny);
+          if (cy >= h || !open(t[cy * w + cx])) { landed = true; break; }
+          p.x = nx; p.y = ny;
+        }
+        if (landed) this.land(p); else keep.push(p);
+      }
+      this.flying = keep;
+    }
+    land(p) {
+      const w = this.w, x = Math.round(p.x); let y = Math.min(this.h - 1, Math.round(p.y));
+      // Find a free spot here or just above (gas, smoke and flames get pushed aside).
+      for (let up = 0; up < 8 && y >= 0; up++, y--) {
+        const i = y * w + x, b = this.t[i];
+        if (b === 0 || KIND[b] === K.gas || KIND[b] === K.fire || KIND[b] === K.spark || KIND[b] === K.cloud) {
+          this.t[i] = p.m; this.life[i] = p.l; this.shade[i] = p.s; this.fuel[i] = 0; this.skin[i] = p.sk;
+          if (p.sk) this.hasSkins = true;
+          this.stamp[i] = this.clock;
+          return;
+        }
+      }
+      // Nowhere to go (buried in a crowd): it's simply lost in the blast.
     }
 
     /* A lightning bolt from (x, y) zig-zags down until it hits something. */
@@ -1730,6 +1786,8 @@ svg .fill { fill: currentColor; stroke: none; }
         for (let k = 0, n = t.length; k < n; k++) { const v = t[k]; if (MAGNETIC[v] && mg.length < 128) mg.push(k % w, (k / w) | 0); else if (STICKY[v]) sticky = true; else if (BOUNCE[v]) this.hasBouncy = true; }
         this.magnets = mg; this.hasSticky = sticky;
       }
+      this.blastsNow = 0;
+      if (this.flying.length) this.stepFlying();
       // Explosions queued by the last frame's chain reactions.
       if (this.pendingFrost && this.pendingFrost.length) {
         const pf = this.pendingFrost; this.pendingFrost = [];
@@ -3183,6 +3241,12 @@ svg .fill { fill: currentColor; stroke: none; }
           if (px[j] === 0 || (px[j] >>> 24) < a && t[j] === 0) px[j] = ((a << 24) | (cb << 16) | (cg << 8) | cr) >>> 0;
         }
       }
+      // Grains flying through the air after an explosion.
+      for (const p of this.flying) {
+        const x = Math.round(p.x), y = Math.round(p.y); if (x < 0 || y < 0 || x >= this.w || y >= this.h) continue;
+        const cm = p.sk && LIKE[p.sk] === p.m ? p.sk : p.m;
+        px[y * this.w + x] = C[cm * 16 + (p.s >> 4)];
+      }
       if (this.creatures.length) this.renderCreatures(px);
     }
 
@@ -3190,7 +3254,12 @@ svg .fill { fill: currentColor; stroke: none; }
     /* What a cell really is, counting inventions that act like something else. */
     matAt(i) { const m = this.t[i]; if (this.hasSkins) { const sk = this.skin[i]; if (sk && LIKE[sk] === m) return sk; } return m; }
     /* The grid with inventions written back in (for saving and undo); step() turns them back into skins. */
-    exportT() { const out = this.t.slice(); if (this.hasSkins) for (let i = 0; i < out.length; i++) out[i] = this.matAt(i); return out; }
+    exportT() {
+      const out = this.t.slice(); if (this.hasSkins) for (let i = 0; i < out.length; i++) out[i] = this.matAt(i);
+      // Grains still in the air are saved where they are (they keep flying in the game itself).
+      for (const p of this.flying) { const x = Math.round(p.x), y = Math.round(p.y), i = y * this.w + x; if (x >= 0 && y >= 0 && x < this.w && y < this.h && !out[i]) out[i] = p.sk || p.m; }
+      return out;
+    }
     /* A lightning strike at column x that looks like invention 'skin' (0 for plain lightning). */
     strike(x, skin) { this.curBase = M.LIGHTNING; this.curSkin = skin || 0; this.bolt(x, -1); this.curBase = this.curSkin = 0; }
     copyFrom(other) {
@@ -3843,6 +3912,34 @@ svg .fill { fill: currentColor; stroke: none; }
   }
   const ZAP_WORDS = /\b(zap|shock|electr|volt|spark|thunder|lightning|static|tesla)/i;
   const BOOM_WORDS = /\b(explod|explosive|bomb|kaboom|boom|detonat|dynamite|tnt\b|nitro)/i;
+  /* Inventions named after a built-in animal borrow its picture (recoloured) and movement. */
+  const OLD_MOVES = { [M.FISH]: 'swim', [M.BIRD]: 'fly', [M.WORM]: 'burrow', [M.FIREFLY]: 'flutter', [M.BEE]: 'flutter', [M.FROG]: 'hop',
+    [M.ANT]: 'walk', [M.SNAIL]: 'climb', [M.LIZARD]: 'walk', [M.PENGUIN]: 'amphibian', [M.CRAB]: 'wade', [M.DRAGON]: 'fly', [M.COW]: 'walk',
+    [M.SNAKE]: 'slither', [M.RABBIT]: 'leap', [M.JELLYFISH]: 'drift', [M.TADPOLE]: 'swim', [M.CATERPILLAR]: 'climb', [M.BUTTERFLY]: 'flutter' };
+  const KIN_WORDS = [[/\bslugs?\b/i, M.SNAIL], [/\brats?\b/i, M.MOUSE], [/\b(bull|ox|cattle)\b/i, M.COW], [/\bserpents?\b/i, M.SNAKE],
+    [/\bmoths?\b/i, M.BUTTERFLY], [/\bsquids?\b/i, M.OCTOPUS], [/\b(hare|bunny|bunnies)\b/i, M.RABBIT], [/\b(sparrow|crow|raven|chick|robin|finch)s?\b/i, M.BIRD],
+    [/\b(toad)s?\b/i, M.FROG], [/\b(wyrm|drake)s?\b/i, M.DRAGON], [/\b(pony|ponies|horse)\b/i, M.UNICORN], [/\bbeetles?\b/i, M.ANT]];
+  let KIN_LIST = null;
+  function kinCreature(name) {
+    if (!KIN_LIST) KIN_LIST = MATS.filter((m, i) => m && isBuiltin(i) && m.creature && m.sprite && m.id !== M.EGG && m.move !== 'egg')
+      .sort((x, y) => y.name.length - x.name.length)
+      .map((m) => [new RegExp('\\b' + m.name.toLowerCase().replace(/[^a-z ]/g, '') + '(s|es)?\\b', 'i'), m.id]);
+    for (const [re, id] of KIN_LIST) if (re.test(name)) return id;
+    for (const [re, id] of KIN_WORDS) if (MATS[id] && MATS[id].sprite && re.test(name)) return id;
+    return 0;
+  }
+  const kinMove = (k) => MATS[k].move || OLD_MOVES[k] || 'walk';
+  function borrowLook(k, cols) {
+    const src = MATS[k], spr = src.sprite;
+    const pose = spr.walk || spr.fly || spr.swim || spr.crawl || spr[Object.keys(spr)[0]];
+    const frames = pose.length > 1 ? pose.slice(0, 2) : [pose[0], pose[0]];
+    // The biggest patches of colour take the invention's colours; tiny details (eyes, beaks, feet) keep theirs.
+    const count = {}; frames[0].join('').replace(/\./g, '').split('').forEach((ch) => { count[ch] = (count[ch] || 0) + 1; });
+    const order = Object.keys(count).sort((x, y) => count[y] - count[x]);
+    const pal = Object.assign({}, src.pal);
+    order.forEach((ch, i) => { if (i < 3 && count[ch] > 2) pal[ch] = cols[i]; });
+    return { pal, ax: src.ax, ay: src.ay, sprite: { walk: frames } };
+  }
   function buildEntry(spec, a, b, parts) {
     if (!spec || typeof spec !== 'object') return null;
     const name = cleanName(spec.name); if (!name) return null;
@@ -3858,7 +3955,9 @@ svg .fill { fill: currentColor; stroke: none; }
     // Eggs (and cocoons) sit still and hatch, whatever the AI said about how they move.
     if (spec.movement === 'egg' || (type !== 'object' && EGG_WORDS.test(name))) return eggEntry(spec, base, cols, name, ing);
     if (type === 'creature') {
-      const move = MOVES.includes(spec.movement) ? spec.movement : 'walk';
+      // Named after one of the game's own animals ("Frost Owl")? Then it looks and moves like that animal.
+      const kin = kinCreature(name);
+      const move = kin ? kinMove(kin) : MOVES.includes(spec.movement) ? spec.movement : 'walk';
       // Pixel picture: up to 7 wide and 5 tall, letters a-d are the four colours.
       let rows = Array.isArray(spec.sprite) ? spec.sprite.map((r) => String(r).replace(/[^abcd.]/g, '.').slice(0, 7)).filter((r) => r.length).slice(0, 5) : [];
       let width = Math.max(0, ...rows.map((r) => r.length));
@@ -3887,9 +3986,17 @@ svg .fill { fill: currentColor; stroke: none; }
       if (has(ab, 'zaps') || ZAP_WORDS.test(said)) abil.zaps = true;
       if (has(ab, 'explodes') || BOOM_WORDS.test(said)) abil.explodes = true;
       const traits = ['life', move === 'fly' || move === 'flutter' ? 'air' : move === 'swim' || move === 'wade' ? 'wet' : move === 'burrow' ? 'earth' : '', abil.breath ? 'hot' : '', abil.glow ? 'magic' : '', abil.zaps ? 'metal' : '', abil.explodes ? 'boom' : ''].filter(Boolean).join(' ');
-      return Object.assign(base, { kind: 'creature', density: 1, creature: true, colors: [cols[0], cols[1]], move, traits,
+      const out = Object.assign(base, { kind: 'creature', density: 1, creature: true, colors: [cols[0], cols[1]], move, traits,
         pal: { a: cols[0], b: cols[1], c: cols[2], d: cols[3] }, ax: Math.floor(width / 2), ay: ground ? rows.length - 1 : Math.floor(rows.length / 2),
         sprite: { walk: [rows, frameB] }, abil, layEgg: has(ab, 'lays_eggs') });
+      if (kin) {
+        Object.assign(out, borrowLook(kin, cols));
+        // It keeps its family's habits too (an owl still snaps up bugs), plus whatever the AI gave it.
+        const fam = MATS[kin].abil || {};
+        ['eatsBugs', 'eatsFish', 'graze', 'flee', 'fireproof', 'breath'].forEach((k) => { if (fam[k] !== undefined && out.abil[k] === undefined) out.abil[k] = fam[k]; });
+        out.kin = kin;
+      }
+      return out;
     }
     if (type === 'object') {
       const parts = {};
