@@ -462,7 +462,7 @@ svg .fill { fill: currentColor; stroke: none; }
         <div class="row ai-url-row"><input type="url" id="ai-url" autocomplete="off" spellcheck="false" aria-label="Worker address"><button class="ghost-btn" id="ai-test" type="button">Test</button></div>
       </details>
     </section>
-    <p class="game-ver" id="game-ver">Game version: Oct 10, update 12</p>
+    <p class="game-ver" id="game-ver">Game version: Oct 10, update 14</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -653,10 +653,11 @@ svg .fill { fill: currentColor; stroke: none; }
     TAR: 234, SOAP: 235, GLITTER: 236, NEON: 237, STEEL: 238, PEARL: 239,
     OWL: 240, BAT: 241, TURTLE: 242, MOUSE: 243, OCTOPUS: 244, PHOENIX: 245, UNICORN: 246, DUCK: 247,
     LIGHTHOUSE: 248, PYRAMID: 249, IGLOO: 250, CANDLE: 251, FOUNTAIN: 252, GINGERBREAD: 253,
+    WALL: 226, // took the last invention slot (saved inventions move to a free one)
   };
   // Ids from BUILTIN up to EXTRA-1 are kept free for things the AI invents
   // (254 and 255 are the Dropper and Eraser tools in the game).
-  const BUILTIN = 109, EXTRA = 227, COUNT = 254;
+  const BUILTIN = 109, EXTRA = 226, COUNT = 254;
 
   /* kind: how it moves.  density: heavier things sink through lighter
      liquids.  slip: how readily a powder slides off a pile (0..1).
@@ -1084,6 +1085,10 @@ svg .fill { fill: currentColor; stroke: none; }
   def(M.PEARL, { key: 'pearl', name: 'Pearl', kind: 'powder', density: 3, slip: 0.7, magic: true,
     colors: ['#fffaf4', '#eadcf0'], hint: 'Something shiny from the bottom of the sea.', recipe: 'Sea Water + Stardust', desc: 'Shimmers softly.',
     props: { glow: [255, 240, 250] } });
+  // Walls: always in the toolbox, and nothing in the world can break them.
+  def(M.WALL, { key: 'wall', name: 'Wall', kind: 'solid', density: 99, start: true, wall: true,
+    colors: ['#7a7f9e', '#4a4e68'], hint: 'Always in your toolbox.', recipe: 'Always available',
+    desc: 'Unbreakable. Blasts, acid, lava and the void can\u2019t touch it. Only the eraser or the clear button removes it.' });
 
   // New creatures. These use the same movements and abilities as invented ones.
   creature(M.OWL, { key: 'owl', name: 'Owl', colors: ['#a07850', '#f0e0c0'], move: 'fly',
@@ -1518,6 +1523,10 @@ svg .fill { fill: currentColor; stroke: none; }
   const SNAKE_FOOD = new Uint8Array(COUNT); [M.FROG, M.ANT, M.RABBIT, M.EGG, M.MOUSE].forEach((m) => { SNAKE_FOOD[m] = 1; });
   // Abilities per creature (see materials.js), and what counts as fire for the fireproof.
   const ABIL = []; MATS.forEach((m) => { if (m && m.abil) ABIL[m.id] = m.abil; });
+  const FX = []; // effects an invented element has on the world around it (wind, frost, sparks...)
+  // How hard each explosive goes off (gunpowder = 1). Other explosive inventions use 1.6.
+  const BOOM = new Float32Array(COUNT); BOOM[M.GUNPOWDER] = 1; BOOM[M.NITRO] = 3;
+  const boomOf = (m) => BOOM[m] || 1.6;
   const FIERY = new Uint8Array(COUNT);
   [M.FIRE, M.COLDFIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.PLASMA, M.LIGHTNING, M.EMBER, M.ROCKET].forEach((m) => { FIERY[m] = 1; });
   const blend = (under, over) => { // mix a see-through sprite pixel over what's below
@@ -1578,7 +1587,7 @@ svg .fill { fill: currentColor; stroke: none; }
     if (IGNITERS.has(id)) { FIERY[id] = 1; HOT[id] = 1; }
     if (m.props && m.props.hot) DEADLY[id] = 1;
     buildProps(m); buildSprite(m);
-    ABIL[id] = m.abil; MOVE[id] = m.move;
+    ABIL[id] = m.abil; MOVE[id] = m.move; FX[id] = m.fx;
     COLORVER++;
   }
   const SPARK_RGB = ((255 << 24) | (255 << 16) | (250 << 8) | 170) >>> 0; // electricity in a wire
@@ -1686,31 +1695,33 @@ svg .fill { fill: currentColor; stroke: none; }
 
     ignite(j) {
       const b = this.t[j];
-      if (b === M.GUNPOWDER) { this.blast(j % this.w, (j / this.w) | 0); return; }
+      if (b === M.GUNPOWDER) { this.blast(j % this.w, (j / this.w) | 0, 1); return; }
       if (b === M.FIREWORK) { this.put(j, M.ROCKET); return; }
       if (b === M.FROSTBOMB) { this.frostBlast(j % this.w, (j / this.w) | 0); return; }
-      if (VOLATILE[b]) { this.t[j] = 0; this.blast(j % this.w, (j / this.w) | 0); return; }
+      if (VOLATILE[b]) { this.t[j] = 0; this.blast(j % this.w, (j / this.w) | 0, boomOf(b)); return; }
       this.put(j, M.FIRE, Math.min(255, BURN[b] + ri(BURN[b] + 20)));
       this.fuel[j] = b;
     }
 
-    blast(cx, cy) {
-      this.hurtCreatures(cx, cy, 8, 'burn');
-      const r = 5 + ri(3), w = this.w, h = this.h;
+    blast(cx, cy, power) {
+      power = power || 1;
+      this.hurtCreatures(cx, cy, Math.round(8 * (0.7 + 0.3 * power)), 'burn');
+      const r = Math.round((5 + ri(3)) * (0.75 + 0.25 * power)), w = this.w, h = this.h; // nitro digs a bigger crater
       this.t[cy * w + cx] = 0;
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         if (dx * dx + dy * dy > r * r) continue;
         const x = cx + dx, y = cy + dy;
         if (x < 0 || y < 0 || x >= w || y >= h) continue;
         const j = y * w + x, b = this.t[j];
-        if (b === M.METAL || b === M.OBSIDIAN || b === M.DIAMOND || b === M.BRICK || b === M.STEEL) continue;
-        if (b === M.GUNPOWDER) { this.t[j] = 0; this.pendingBlasts.push(x, y); continue; }
+        if (b === M.METAL || b === M.OBSIDIAN || b === M.DIAMOND || b === M.BRICK || b === M.STEEL || b === M.WALL) continue;
+        if (b === M.GUNPOWDER) { this.t[j] = 0; this.pendingBlasts.push(x, y, 1); continue; }
+        if (VOLATILE[b]) { this.t[j] = 0; this.pendingBlasts.push(x, y, boomOf(b)); continue; } // nitro caught in a blast goes off too
         if (b === M.GLASS) { this.put(j, M.SAND); continue; }
         if (b === M.STONE) { if (rnd() < 0.5) this.put(j, M.SAND); continue; }
         if (b === M.WATER) { if (rnd() < 0.5) this.put(j, M.STEAM); continue; }
         if (rnd() < 0.45) this.put(j, M.FIRE, 6 + ri(14)); else if (b !== M.CRYSTAL) this.t[j] = 0;
       }
-      this.shove(cx, cy, r);
+      this.shove(cx, cy, r, power);
     }
     /* ---------------- Air ----------------
        The air is a coarse grid (one air cell per 4x4 world cells) with pressure and wind. An explosion
@@ -1723,13 +1734,15 @@ svg .fill { fill: currentColor; stroke: none; }
       this.au = new Float32Array(n); this.av = new Float32Array(n); this.ap = new Float32Array(n); this.ap2 = new Float32Array(n);
       this.asolid = new Uint8Array(n); this.airOn = false; this.airAge = 0;
     }
-    shove(cx, cy, r) {
+    shove(cx, cy, r, power) {
+      power = power || 1;
       if (!this.au) this.initAir();
       const A = this.A, ax = Math.min(this.aw - 1, (cx / A) | 0), ay = Math.min(this.ah - 1, (cy / A) | 0);
       if (!this.airOn) { this.airSolids(); this.airOn = true; }
-      const add = (x, y, k) => { if (x < 0 || y < 0 || x >= this.aw || y >= this.ah) return; const i = y * this.aw + x; this.ap[i] += k * Math.max(0.15, 1 - this.ap[i] / 40); this.asolid[i] = 0; };
-      add(ax, ay, 7);
-      add(ax - 1, ay, 3); add(ax + 1, ay, 3); add(ax, ay - 1, 3); add(ax, ay + 1, 3);
+      const add = (x, y, k) => { if (x < 0 || y < 0 || x >= this.aw || y >= this.ah) return; const i = y * this.aw + x; this.ap[i] += k * Math.max(0.15, 1 - this.ap[i] / 80); this.asolid[i] = 0; };
+      add(ax, ay, 7 * power);
+      add(ax - 1, ay, 3 * power); add(ax + 1, ay, 3 * power); add(ax, ay - 1, 3 * power); add(ax, ay + 1, 3 * power);
+      if (power > 1.5) for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1], [-2, 0], [2, 0], [0, -2], [0, 2]]) add(ax + dx, ay + dy, 1.5 * power); // a big blast pushes a wider patch of air
       this.airAge = 0;
     }
     // Which air cells are blocked by walls (mostly solid things that don't move).
@@ -1789,7 +1802,7 @@ svg .fill { fill: currentColor; stroke: none; }
         if (this.asolid[ai] && ay > 0 && !this.asolid[ai - aw]) ai -= aw; // the top of the ground feels the air just above it
         const raw = Math.sqrt(u[ai] * u[ai] + v[ai] * v[ai]);
         if (raw < 0.3) continue;
-        const sp = Math.min(raw, 4), wu = u[ai] / raw * sp, wv = v[ai] / raw * sp; // even a huge blast tops out
+        const sp = Math.min(raw, 6), wu = u[ai] / raw * sp, wv = v[ai] / raw * sp; // even a huge blast tops out
         // also feel the wind from the cell next door, so the edge of the ground gets hit
         for (let y = Math.min(h, ay * A + A) - 1; y >= ay * A; y--) for (let x = ax * A; x < Math.min(w, ax * A + A); x++) {
           const j = y * w + x, m = t[j]; if (!m || BOUNCE[m]) continue;
@@ -1807,7 +1820,7 @@ svg .fill { fill: currentColor; stroke: none; }
           if (fly.length > 4000) return;
           const boost = 2.4 / (0.6 + weight * 0.25);      // light things are thrown faster
           fly.push({ m, sk: this.hasSkins ? this.skin[j] : 0, l: this.life[j], s: this.shade[j], x, y,
-            vx: Math.max(-7, Math.min(7, wu * boost + (rnd() - 0.5) * 0.4)), vy: Math.max(-7, Math.min(6, wv * boost - 0.25 - rnd() * 0.3)), wt: weight });
+            vx: Math.max(-9, Math.min(9, wu * boost + (rnd() - 0.5) * 0.4)), vy: Math.max(-9, Math.min(6, wv * boost - 0.25 - rnd() * 0.3)), wt: weight });
           t[j] = 0; this.skin[j] = 0; this.life[j] = 0;
         }
       }
@@ -1823,6 +1836,62 @@ svg .fill { fill: currentColor; stroke: none; }
         }
       }
     }
+    /* What an invention does to the cells around it. Each effect only fires now and then, so a big
+       patch acts strongly and a single grain just a little. Returns true if the cell itself is used up. */
+    effects(i, x, y, F, id) {
+      const w = this.w, h = this.h, t = this.t;
+      const near = () => { const d = ri(8), xx = x + NX[d], yy = y + NY[d]; return xx < 0 || yy < 0 || xx >= w || yy >= h ? -1 : yy * w + xx; };
+      if (F.wind && rnd() < 0.12) this.gust(x, y, id);
+      if (F.freeze && rnd() < 0.06) {
+        const j = near();
+        if (j >= 0) {
+          const b = t[j], kb = KIND[b];
+          if (b === M.WATER || b === M.SEAWATER || b === M.SWAMP) this.put(j, M.ICE);
+          else if (b === M.LAVA) this.put(j, M.OBSIDIAN);
+          else if (b === M.STEAM) this.put(j, M.WATER);
+          else if (kb === K.fire && b !== M.ETERNAL) t[j] = rnd() < 0.5 ? M.SMOKE : 0;
+          else if (b === 0 && j < i && rnd() < 0.12) this.put(j, M.SNOW); // flurries
+        }
+      }
+      if (F.sparks && rnd() < 0.005) {
+        const j = near();
+        if (j >= 0) { const b = t[j]; if (b === 0 || KIND[b] === K.gas) this.put(j, M.LIGHTNING); else if (FLAM[b] > 0) this.ignite(j); else if (CONDUCT[b]) this.charge(j, j % w, (j / w) | 0); }
+      }
+      if (F.fog && rnd() < 0.012) { const j = y > 0 ? i - w + ri(3) - 1 : -1; if (j >= 0 && j < t.length && t[j] === 0) this.put(j, M.FOG); }
+      if (F.burn && rnd() < 0.04) {
+        const j = near();
+        if (j >= 0) { const b = t[j]; if (FLAM[b] > 0 && b !== id) this.ignite(j); else if (b === M.ICE || b === M.SNOW) this.put(j, M.WATER); }
+      }
+      if (F.melt && rnd() < 0.05) { const j = near(); if (j >= 0 && (t[j] === M.ICE || t[j] === M.SNOW || t[j] === M.FROSTCRYSTAL)) this.put(j, M.WATER); }
+      if (F.corrode && rnd() < 0.02) {
+        const j = near();
+        if (j >= 0) {
+          const b = t[j], kb = KIND[b];
+          if (b && b !== t[i] && b !== M.WALL && b !== M.STEEL && b !== M.DIAMOND && b !== M.GLASS && b !== M.OBSIDIAN && b !== M.CAULDRON && kb !== K.gas && kb !== K.fire) {
+            t[j] = 0; this.skin[j] = 0;
+            if (rnd() < 0.25) { t[i] = 0; this.skin[i] = 0; return true; } // it gets used up as it eats
+          }
+        }
+      }
+      if (F.rain && rnd() < 0.008) { const j = i + w; if (y < h - 1 && t[j] === 0) this.put(j, M.WATER); }
+      return false;
+    }
+    /* A storm blows the air about: gusts swing back and forth with a little lift. */
+    gust(x, y, id) {
+      if (!this.au) this.initAir();
+      if (!this.airOn) { this.airSolids(); this.airOn = true; }
+      const A = this.A, aw = this.aw;
+      let ax = Math.min(aw - 1, (x / A) | 0), ay = Math.min(this.ah - 1, (y / A) | 0), ai = ay * aw + ax;
+      for (let up = 0; up < 3 && this.asolid[ai] && ay > 0; up++) { ay--; ai -= aw; } // blow the air just above a heap
+      if (this.asolid[ai]) return;
+      const dir = Math.sin(this.frame / 140 + id * 1.7) + 0.35 * Math.sin(this.frame / 37 + id);
+      const u = this.au, v = this.av;
+      if (u[ai] * u[ai] + v[ai] * v[ai] < 4) { u[ai] += dir * 0.09; v[ai] += (rnd() - 0.6) * 0.03; }
+      // Storms reach down: the gust also hits the air near the ground below it.
+      for (let dy = 1; dy < this.ah - ay; dy++) {
+        const bi = ai + dy * aw; if (this.asolid[bi]) { const gi = bi - aw; if (gi !== ai && u[gi] * u[gi] < 4) u[gi] += dir * 0.06; break; }
+      }
+    }
     /* Move the thrown grains: gravity pulls them down, and they land on the first thing they hit. */
     stepFlying() {
       const w = this.w, h = this.h, t = this.t, list = this.flying, keep = [];
@@ -1830,8 +1899,8 @@ svg .fill { fill: currentColor; stroke: none; }
       for (const p of list) {
         p.vy = Math.min(p.vy + 0.16, 6); p.vx *= 0.985;
         if (this.airOn) { // grains in the air are carried along by the wind (light ones more)
-          const wd = this.windAt(p.x, p.y), k = 0.12 / (0.6 + (p.wt || 2) * 0.25), boost = 2.4 / (0.6 + (p.wt || 2) * 0.25), ws = Math.hypot(wd[0], wd[1]); if (ws > 4) { wd[0] *= 4 / ws; wd[1] *= 4 / ws; }
-          p.vx += (wd[0] * boost - p.vx) * k; p.vy += (wd[1] * boost - p.vy) * k; p.vx = Math.max(-7, Math.min(7, p.vx));
+          const wd = this.windAt(p.x, p.y), k = 0.12 / (0.6 + (p.wt || 2) * 0.25), boost = 2.4 / (0.6 + (p.wt || 2) * 0.25), ws = Math.hypot(wd[0], wd[1]); if (ws > 6) { wd[0] *= 6 / ws; wd[1] *= 6 / ws; }
+          p.vx += (wd[0] * boost - p.vx) * k; p.vy += (wd[1] * boost - p.vy) * k; p.vx = Math.max(-9, Math.min(9, p.vx));
         }
         const n = Math.max(1, Math.ceil(Math.max(Math.abs(p.vx), Math.abs(p.vy))));
         let landed = false;
@@ -1907,7 +1976,7 @@ svg .fill { fill: currentColor; stroke: none; }
       }
       if (this.pendingBlasts.length) {
         const pb = this.pendingBlasts; this.pendingBlasts = [];
-        for (let k = 0; k < pb.length && k < 60; k += 2) this.blast(pb[k], pb[k + 1]);
+        for (let k = 0; k < pb.length && k < 90; k += 3) this.blast(pb[k], pb[k + 1], pb[k + 2]);
       }
       for (let y = h - 1; y >= 0; y--) {
         const ltr = ((this.frame + y) & 1) === 0;
@@ -1919,6 +1988,7 @@ svg .fill { fill: currentColor; stroke: none; }
           if (LIKE[m]) { this.skin[i] = m; m = t[i] = LIKE[m]; this.hasSkins = true; } // an invention loaded from a save
           if (this.hasSkins) { const sk = this.skin[i]; this.curBase = m; this.curSkin = sk && LIKE[sk] === m ? sk : 0; }
           if (m === M.CLOUD) clouds++;
+          { const fxId = this.curSkin || m; if (FX[fxId] && this.effects(i, x, y, FX[fxId], fxId)) continue; }
           // 1) React with one random neighbour.
           if (REACTIVE[m] && this.react(i, x, y, m)) continue;
           // 2) Material-specific behaviour, then movement.
@@ -2262,7 +2332,7 @@ svg .fill { fill: currentColor; stroke: none; }
           const d = ri(8), xx = x + NX[d], yy = y + NY[d];
           if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
           const j = yy * w + xx, b = t[j];
-          if (b && b !== M.VOID && b !== M.CAULDRON && rnd() < 0.6) t[j] = 0;
+          if (b && b !== M.VOID && b !== M.CAULDRON && b !== M.WALL && rnd() < 0.6) t[j] = 0;
           break;
         }
         case M.ETERNAL:
@@ -2593,7 +2663,7 @@ svg .fill { fill: currentColor; stroke: none; }
         });
         for (let k = 0; k < booms.length; k += 2) {
           const x = Math.max(0, Math.min(this.w - 1, booms[k])), y = Math.max(0, Math.min(this.h - 1, booms[k + 1]));
-          this.blast(x, y);
+          this.blast(x, y, 1.2);
         }
       }
     }
@@ -2906,6 +2976,7 @@ svg .fill { fill: currentColor; stroke: none; }
     morph(c, k) { c.k = k; c.s = 0; c.t = 30 + ri(60); c.age = 0; c.vx = c.vy = 0; this.discover(k); }
     abilities(c, A, here) {
       const x = Math.round(c.x), y = Math.round(c.y), w = this.w;
+      if (A.fx && x >= 0 && y >= 0 && x < w && y < this.h) for (let k = 0; k < 4; k++) this.effects(y * w + x, x, y, A.fx, c.k); // a creature's aura
       // Zaps: every so often a short crackling arc of lightning jumps out of it.
       if (A.zaps) {
         if (!c.zt) c.zt = 90 + ri(150);
@@ -3075,6 +3146,7 @@ svg .fill { fill: currentColor; stroke: none; }
         const ch = rows[r][q]; if (ch === '.') continue;
         const x = x0 + q, y = y0 + r; if (x < 0 || y < 0 || x >= w || y >= h) continue;
         const i = y * w + x;
+        if (this.t[i] === M.WALL) continue; // builds go around walls
         if (ch === '_') { this.t[i] = 0; this.life[i] = 0; this.fuel[i] = 0; continue; }
         const m = o.key2[ch]; this.t[i] = m; this.life[i] = this.defaultLife(m); this.fuel[i] = 0; this.shade[i] = ri(256);
       }
@@ -3335,6 +3407,7 @@ svg .fill { fill: currentColor; stroke: none; }
         else if (m === M.GHOSTFIRE) s = Math.max(0, 15 - Math.min(15, life[i] >> 2));
         else if (m === M.PLASMA || m === M.FIREWORK) s = (s + fr) & 15;
         else if (m === M.ROCKET) s = fr & 1 ? 0 : 6;
+        else if (m === M.WALL) { const x = i % this.w, y = (i / this.w) | 0, row = (y / 3) | 0; s = (y % 3 === 2 || (x + (row & 1) * 3) % 6 === 5) ? 15 : (sh[i] >> 6); } // bricks and mortar
         px[i] = C[cm * 16 + s];
       }
       // Glowing elements light up the empty space around them.
@@ -3426,7 +3499,7 @@ svg .fill { fill: currentColor; stroke: none; }
     M.HOUSE, M.VOLCANO, M.CHEST, M.SNOWMAN, M.CAMPFIRE, M.CASTLE,
     M.GLOWSTONE, M.GLUE, M.BOUNCY, M.IRON, M.MAGNET, M.COPPER, M.BATTERY, M.DRYICE, M.NITRO, M.CHOCOLATE, M.MELTCHOC, M.CORAL,
     M.SUGAR, M.CARAMEL, M.CANDY, M.COTTONCANDY, M.WAX, M.MELTWAX, M.PAPER, M.TAR, M.SOAP, M.STEEL, M.GLITTER, M.NEON, M.PEARL,
-    M.OWL, M.BAT, M.TURTLE, M.MOUSE, M.OCTOPUS, M.PHOENIX, M.UNICORN, M.DUCK,
+    M.OWL, M.BAT, M.TURTLE, M.MOUSE, M.OCTOPUS, M.PHOENIX, M.UNICORN, M.DUCK, M.WALL,
     M.LIGHTHOUSE, M.PYRAMID, M.IGLOO, M.CANDLE, M.FOUNTAIN, M.GINGERBREAD];
   const brewed = (m) => MATS[m].magic || MATS[m].crafted || MATS[m].creature || MATS[m].object || MATS[m].invented;
   const isCreature = (m) => m > 0 && m < COUNT && !!MATS[m].creature;
@@ -3435,7 +3508,8 @@ svg .fill { fill: currentColor; stroke: none; }
   // Everything is shown in three labelled groups, A to Z inside each group.
   const byName = (a, b) => MATS[a].name.localeCompare(MATS[b].name);
   const GROUPS = [
-    { label: 'Basics', items: ORDER.filter((m) => MATS[m].start).sort(byName) },
+    { label: 'Basics', items: ORDER.filter((m) => MATS[m].start && !MATS[m].wall).sort(byName) },
+    { label: 'Wall', items: ORDER.filter((m) => MATS[m].wall).sort(byName) },
     { label: 'Elements', items: ORDER.filter((m) => !MATS[m].start && !brewed(m) && m !== M.CAULDRON).sort(byName) },
     { label: 'Crafted', items: ORDER.filter((m) => MATS[m].crafted).sort(byName) },
     { label: 'Magic', items: ORDER.filter((m) => MATS[m].magic).sort(byName) },
@@ -3794,6 +3868,7 @@ svg .fill { fill: currentColor; stroke: none; }
           Crafted: 'Brewed in the Cauldron from everyday things: tap the Brew pot next to your brush', Magic: 'Brewed in the Cauldron, with a touch of magic',
           Creatures: 'Brought to life with Life Essence, in the Cauldron or out in your world',
           Objects: 'Whole builds made of real materials. Tap to place one',
+          Wall: 'Unbreakable walls. Only the eraser or the clear button removes them',
           Inventions: 'Dreamed up by the Cauldron spirit (AI). Mix them again to invent even more' }[label];
         const sm = document.createElement('small'); sm.textContent = note; hd.append(sm);
         g.append(hd);
@@ -3806,7 +3881,7 @@ svg .fill { fill: currentColor; stroke: none; }
       const txt = document.createElement('div'), b = document.createElement('b'), s = document.createElement('span');
       b.textContent = found ? mat.name : '???';
       const how = (mat.start ? 'Starting element' : brewed(m) ? 'Brew: ' + mat.recipe : mat.recipe) + (mat.also ? ' · ' + mat.also : '');
-      s.textContent = found ? how + (mat.desc ? ' · ' + mat.desc : '') : hinted.has(m) ? mat.hint : 'Tap for a hint';
+      s.textContent = found ? how + (mat.desc ? ' · ' + mat.desc : '') + (mat.fxText ? ' · Does: ' + mat.fxText : '') : hinted.has(m) ? mat.hint : 'Tap for a hint';
       txt.append(b, s); c.append(sw, txt);
       if (found && label === 'Inventions') {
         const x = document.createElement('button'); x.type = 'button'; x.className = 'card-del';
@@ -3998,9 +4073,9 @@ svg .fill { fill: currentColor; stroke: none; }
     return out(gr);
   }
   // Turn the AI's answer into a safe material entry (or null if it doesn't make sense).
-  const NOT_LIKE = new Set([M.CAULDRON, M.SPARKLE, M.ROCKET]);
+  const NOT_LIKE = new Set([M.CAULDRON, M.SPARKLE, M.ROCKET, M.WALL]);
   function likeOk(m) { return isBuiltin(m) && !MATS[m].creature && !MATS[m].object && !MATS[m].reserved && KIND[m] !== K.empty && !NOT_LIKE.has(m); }
-  const LIKE_WORDS = [[/storm|thundercloud|rain ?cloud/, M.STORM], [/lightning|thunder|\bbolt|\bzap/, M.LIGHTNING], [/plasma/, M.PLASMA],
+  const LIKE_WORDS = [[/thunder ?storm|rain ?storm|storm ?cloud|thunder ?cloud|rain ?cloud/, M.STORM], [/lightning|thunder|\bbolt|\bzap/, M.LIGHTNING], [/plasma/, M.PLASMA],
     [/\blava|magma/, M.LAVA], [/firework/, M.FIREWORK], [/\b(fire|flames?|blaze|inferno)\b/, M.FIRE], [/\bembers?\b/, M.EMBER], [/\bacid/, M.ACID],
     [/bubbles?\b/, M.BUBBLE], [/\bseeds?\b/, M.SEED], [/\bvines?\b/, M.VINE], [/\bslime/, M.SLIME], [/\bhoney/, M.HONEY]];
   function likeFromName(name) { const n = String(name).toLowerCase(); for (const [re, m] of LIKE_WORDS) if (re.test(n)) return m; return 0; }
@@ -4057,7 +4132,37 @@ svg .fill { fill: currentColor; stroke: none; }
     order.forEach((ch, i) => { if (i < 3 && count[ch] > 2) pal[ch] = cols[i]; });
     return { pal, ax: src.ax, ay: src.ay, sprite: { walk: frames } };
   }
+  /* Effects: things an invention does to the world around it, so it can live up to its description.
+     The AI may list them; older inventions (and quieter AIs) get them from words in the name and description. */
+  const FX_WORDS = {
+    wind: /\b(storm|sandstorm|snowstorm|blizzard|tornado|twister|cyclone|hurricane|gales?|gusts?|gusty|whirl|whirlwind|whirling|windy|winds?|breeze|tempest|vortex|swirl|swirling)\b/,
+    freeze: /\b(icy|ice|frost|frosty|frozen|freez\w*|glacial|glacier|arctic|polar|chill\w*|cold|frigid|wintry)\b/,
+    sparks: /\b(sparks|electric\w*|lightning|zaps?|shock\w*|volt\w*|thunder\w*|crackl\w*|static|charged)\b/,
+    fog: /\b(blind\w*|fog|foggy|mist|misty|haze|hazy|smok\w*|obscur\w*|murk\w*|steamy)\b/,
+    burn: /\b(blaz\w*|burn\w*|fiery|flaming|flames|scorch\w*|inferno|ignit\w*|molten)\b/,
+    melt: /\b(warm\w*|melts?|melting|heats?|thaw\w*)\b/,
+    corrode: /\b(acid\w*|corros\w*|corrod\w*|dissolv\w*|erod\w*)\b/,
+    rain: /\b(rain\w*|drizzl\w*|showers?|downpour|drip\w*)\b/,
+  };
+  const FX_NAMES = Object.keys(FX_WORDS);
+  const FX_LABEL = { wind: 'wind', freeze: 'frost', sparks: 'sparks', fog: 'fog', burn: 'burns', melt: 'melts ice', corrode: 'corrodes', rain: 'rain' };
+  function fxFor(spec, name, desc) {
+    const said = (name + ' ' + desc).toLowerCase(), fx = {};
+    const listed = Array.isArray(spec && spec.effects) ? spec.effects.map((v) => String(v).toLowerCase()) : [];
+    FX_NAMES.forEach((k) => { if (listed.includes(k) || FX_WORDS[k].test(said)) fx[k] = 1; });
+    return Object.keys(fx).length ? fx : null;
+  }
   function buildEntry(spec, a, b, parts) {
+    const e = buildEntry0(spec, a, b, parts);
+    if (!e || e.object || e.kind === 'stamp' || e.move === 'egg') return e;
+    const fx = fxFor(spec, e.name, e.desc || '');
+    if (!fx) return e;
+    if (e.creature) { if (e.abil && e.abil.zaps) delete fx.sparks; if (Object.keys(fx).length) e.abil.fx = fx; }
+    else e.fx = fx;
+    e.fxText = Object.keys(fx).map((k) => FX_LABEL[k]).join(', ');
+    return e;
+  }
+  function buildEntry0(spec, a, b, parts) {
     if (!spec || typeof spec !== 'object') return null;
     const name = cleanName(spec.name); if (!name) return null;
     const type = ['element', 'creature', 'object'].includes(spec.type) ? spec.type : 'element';
@@ -4277,6 +4382,7 @@ svg .fill { fill: currentColor; stroke: none; }
     const STATES = ['powder', 'liquid', 'gas', 'solid'];
     const PROPS = ['glows', 'sticky', 'bouncy', 'flammable', 'explosive', 'evaporates', 'melts', 'freezes', 'grows', 'magnetic', 'conducts', 'hot', 'cold'];
     const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg', 'paddle', 'amphibian'];
+    const EFFECTS = ['wind', 'freeze', 'sparks', 'fog', 'burn', 'melt', 'corrode', 'rain'];
     const ABILITIES = ['breathes_fire', 'glows', 'fireproof', 'grazes', 'lays_eggs', 'eats_bugs', 'eats_fish', 'scared_of_fire', 'leaves_trail', 'fast', 'slow', 'zaps', 'explodes'];
     // Materials an object can be built from (names must match the game).
     // Built-in elements an invented element can act like.
@@ -4300,6 +4406,7 @@ svg .fill { fill: currentColor; stroke: none; }
         movement: { type: 'string', enum: MOVES },
         hatches_into: { type: 'string' },
         abilities: { type: 'array', items: { type: 'string', enum: ABILITIES } },
+        effects: { type: 'array', items: { type: 'string', enum: EFFECTS } },
         sprite: { type: 'array', items: { type: 'string' } },
         build: { type: 'array', items: { type: 'string' } },
         parts: { type: 'array', items: { type: 'object', properties: { letter: { type: 'string' }, material: { type: 'string' } }, required: ['letter', 'material'] } },
@@ -4316,6 +4423,7 @@ svg .fill { fill: currentColor; stroke: none; }
     - type: "element" (a material: powder, liquid, gas or solid), "creature" (an animal or being that moves) or "object" (a small build made of existing materials).
     - description: one short, fun sentence (max 80 characters) saying what it does in the game.
     - colors: 2 to 4 hex colours like "#ff8800" that suit it.
+    - effects: what it does to the world around it, so the description comes true, from: ${EFFECTS.join(', ')}. (wind = stirs up gusts that blow sand about; freeze = freezes water and makes snow; sparks = crackles with little lightning sparks; fog = gives off fog; burn = sets things alight; melt = melts ice and snow; corrode = eats away nearby things; rain = drips water). Use [] if none fit.
     For an element also give:
     - behaves_like: the game element it acts most like, so it really does that in the world (it keeps its own name and colours).
       Choose from: ${LIKE_NAMES.join(', ')}. Examples: Thunderbolt -> Lightning, Magma Goo -> Lava, Frost Flame -> Cold Fire,
@@ -4347,7 +4455,7 @@ Element example: {"name":"Glow Moss","type":"element","description":"Moss that g
 Creature example: {"name":"Ember Fox","type":"creature","description":"A fox with a fiery tail.","colors":["#ff7a2a","#ffd23a","#3a1a0a","#ffffff"],"movement":"walk","abilities":["fireproof"],"sprite":["a...a",".aaab","a.a.a"]}
 Rules: name is 1-3 words and NOT one of the ingredients. Mostly elements. state: powder, liquid, gas or solid. weight 1-10.
 properties from: ${PROPS.join(', ')}. behaves_like from: ${LIKE_SHORT.join(', ')}, none.
-movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. sprite: 2-5 rows of up to 7 of a b c d . (a tiny side view).`;
+movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. effects (what it does to things nearby) from: ${EFFECTS.join(', ')}. sprite: 2-5 rows of up to 7 of a b c d . (a tiny side view).`;
     return { SCHEMA, SYSTEM, LOCAL_SCHEMA, LOCAL_SYSTEM };
   })();
   const local = { engine: null, model: null, loading: null, progress: 0, text: '', cached: {}, error: '' };
