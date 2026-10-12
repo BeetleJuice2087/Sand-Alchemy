@@ -3,12 +3,12 @@
    away when online), falling back to the saved copy when offline. Fonts come
    from the saved copy and refresh in the background. Everything else (the AI
    Worker, the on-device AI download) is left alone. */
-const CACHE = 'sandalchemy-v2';
-const APP_FILES = ['./', 'index.html', 'styles.css', 'materials.js', 'sim.js', 'game.js', 'manifest.webmanifest',
-  'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'];
+const CACHE = 'sandalchemy-v3';
+const APP_FILES = ['./', 'index.html', 'css/styles.css', 'js/materials.js', 'js/sim.js', 'js/game.js', 'manifest.webmanifest',
+  'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
-  // Save what's there (the single-file version has no separate scripts, and that's fine).
+  // Save the game's files so it opens offline.
   event.waitUntil(caches.open(CACHE).then((c) => Promise.all(APP_FILES.map((f) => c.add(f).catch(() => null)))).then(() => self.skipWaiting()));
 });
 
