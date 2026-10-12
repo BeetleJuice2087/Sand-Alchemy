@@ -462,7 +462,7 @@ svg .fill { fill: currentColor; stroke: none; }
         <div class="row ai-url-row"><input type="url" id="ai-url" autocomplete="off" spellcheck="false" aria-label="Worker address"><button class="ghost-btn" id="ai-test" type="button">Test</button></div>
       </details>
     </section>
-    <p class="game-ver" id="game-ver">Game version: Oct 10, update 18</p>
+    <p class="game-ver" id="game-ver">Game version: Oct 10, update 19</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -1888,7 +1888,7 @@ svg .fill { fill: currentColor; stroke: none; }
       const around = (j, m) => { let n = 0; const jx = j % w, jy = (j / w) | 0; for (let d = 0; d < 8; d++) { const xx = jx + NX[d], yy = jy + NY[d]; if (xx >= 0 && yy >= 0 && xx < w && yy < h && t[yy * w + xx] === m) n++; } return n; };
       const solidBelow = (j) => j + w < t.length && t[j + w] !== 0 && KIND[t[j + w]] !== K.gas;
       // A head count of every material, refreshed now and then, so spreading and trails stop at a sensible size.
-      if ((F.grow || F.bloom || F.web || F.slime || F.plants || F.crystal || F.bubbles) && (!this.matCount || this.frame - this.countedAt > 30)) {
+      if ((F.grow || F.bloom || F.web || F.slime || F.plants || F.crystal || F.bubbles || F.duplicate || F.absorb || F.fungus || F.regen || F.ferment) && (!this.matCount || this.frame - this.countedAt > 30)) {
         const mc = this.matCount || (this.matCount = new Uint32Array(COUNT)); mc.fill(0);
         for (let k = 0; k < t.length; k++) mc[t[k]]++;
         this.countedAt = this.frame;
@@ -1969,6 +1969,46 @@ svg .fill { fill: currentColor; stroke: none; }
       if (F.teleport && rnd() < 0.003 && t[i]) { // blink to a free spot nearby
         for (let tries = 0; tries < 6; tries++) { const j = pick(12); if (j >= 0 && t[j] === 0) { this.swap(i, j); this.stamp[j] = this.clock; for (let k = 0; k < 3; k++) { const q = pick(2); if (q >= 0 && t[q] === 0) this.put(q, M.SPARKLE, 5 + ri(6)); } return true; } }
       }
+      // ================= third batch =================
+      const fling = (j, vx, vy) => { // send cell j flying (if there's room in the air)
+        if (this.flying.length > 4000) return;
+        this.flying.push({ m: t[j], sk: this.hasSkins ? this.skin[j] : 0, l: this.life[j], s: this.shade[j], x: j % w, y: (j / w) | 0, vx, vy, wt: 1 });
+        t[j] = 0; this.skin[j] = 0; this.life[j] = 0;
+      };
+      const reach = (j) => { const jx = j % w, jy = (j / w) | 0; return (jy > 0 && openAt(j - w)) || (jx > 0 && openAt(j - 1)) || (jx < w - 1 && openAt(j + 1)); };
+      const tough = (b) => b === M.WALL || b === M.STEEL || b === M.DIAMOND || b === M.CAULDRON || b === M.VOID;
+      if (F.vortex && rnd() < 0.3) this.airSwirl(x, y, id);
+      if (F.orbit && rnd() < 0.45) { const j = pick(8); if (j >= 0 && loose(t[j]) && t[j] !== t[i] && reach(j)) { const dx = (j % w) - x, dy = ((j / w) | 0) - y, d = Math.hypot(dx, dy) || 1, sp = 1.6; fling(j, -dy / d * sp - dx / d * 0.4, dx / d * sp - dy / d * 0.4 - 0.5); } }
+      if (F.bounce && rnd() < 0.45) { const j = pick(6); if (j >= 0 && loose(t[j]) && t[j] !== t[i] && j >= w && openAt(j - w)) fling(j, (rnd() - 0.5) * 1.2, -1.6 - rnd() * 1.4); }
+      if (F.pulse && ((this.frame + id * 13) % 100) === 0 && rnd() < 0.6) this.airPop(x, y, 1.4);
+      if (F.splash && rnd() < 0.4) { const j = pick(5); if (j >= 0 && KIND[t[j]] === K.liquid && t[j] !== t[i] && j >= w && openAt(j - w)) fling(j, (rnd() - 0.5) * 3, -1.5 - rnd() * 1.8); }
+      if (F.erupt && rnd() < 0.004 && y > 0 && openAt(i - w) && this.flying.length < 4000) {
+        const n = 3 + ri(4); for (let k = 0; k < n; k++) this.flying.push({ m: rnd() < 0.3 ? M.LAVA : M.EMBER, sk: 0, l: 20 + ri(30), s: ri(256), x, y: y - 1, vx: (rnd() - 0.5) * 2.4, vy: -3 - rnd() * 2.5, wt: 2 });
+      }
+      if (F.disintegrate && rnd() < 0.02) { const j = near(); if (j >= 0) { const b = t[j]; if (b && b !== t[i] && !tough(b) && (KIND[b] === K.solid || KIND[b] === K.stamp)) this.put(j, FLAM[b] > 0 ? M.ASH : M.SAND); } }
+      if (F.transmute && rnd() < 0.01) { const j = near(); if (j >= 0) { const b = t[j]; if (b && b !== t[i] && !tough(b) && KIND[b] !== K.fire) { const L = [M.SAND, M.WATER, M.STONE, M.DIRT, M.SALT, M.SNOW, M.ICE, M.MUD, M.GOLD, M.CRYSTAL, M.CLAY, M.STARDUST, M.SLIME, M.HONEY]; this.put(j, L[ri(L.length)]); } } }
+      if (F.duplicate && rnd() < 0.01) { const j = near(); if (j >= 0) { const b = t[j]; if (b && b !== t[i] && !tough(b) && KIND[b] !== K.creature && room(b, 400)) { const jx = j % w, jy = (j / w) | 0; for (let k = 0; k < 4; k++) { const d = ri(8), xx = jx + NX[d], yy = jy + NY[d]; if (xx >= 0 && yy >= 0 && xx < w && yy < h && t[yy * w + xx] === 0) { this.put(yy * w + xx, b); break; } } } } }
+      if (F.absorb && rnd() < 0.03) { const j = near(); if (j >= 0) { const b = t[j]; if (b && b !== t[i] && loose(b)) { t[j] = 0; this.skin[j] = 0; if (rnd() < 0.3 && t[i] && room(t[i], 350)) this.put(j, id); } } }
+      if (F.dissolve && rnd() < 0.05) { const j = near(); if (j >= 0) { const b = t[j]; if (b === M.SALT || b === M.SUGAR || b === M.CANDY || b === M.COTTONCANDY || b === M.CARAMEL || b === M.SOAP) this.put(j, M.WATER); } }
+      if (F.liquefy && rnd() < 0.03) { const j = near(); if (j >= 0) { const b = t[j]; const to = b === M.STONE || b === M.OBSIDIAN ? M.LAVA : b === M.ICE || b === M.SNOW ? M.WATER : b === M.WAX ? M.MELTWAX : b === M.CHOCOLATE ? M.MELTCHOC : b === M.CANDY ? M.CARAMEL : 0; if (to) this.put(j, to); } }
+      if (F.contaminate && rnd() < 0.1) { const j = near(); if (j >= 0) { const b = t[j]; if (b === M.WATER || b === M.SEAWATER) this.put(j, M.SWAMP); else if (b === M.DIRT || b === M.SAND) this.put(j, M.MUD); } }
+      if (F.decay && rnd() < 0.02) { const j = near(); if (j >= 0) { const b = t[j]; if (b === M.PLANT || b === M.FLOWER || b === M.WOOD || b === M.VINE || b === M.MOSS || b === M.MUSHROOM || b === M.SEED || b === M.PAPER) this.put(j, M.DIRT); } }
+      if (F.ferment && rnd() < 0.02) { const j = near(); if (j >= 0) { const b = t[j]; if (b === M.SUGAR || b === M.HONEY || b === M.CANDY || b === M.PLANT || b === M.FLOWER) { this.put(j, M.SLIME); const q = near(); if (q >= 0 && t[q] === 0 && room(M.BUBBLE, 200)) this.put(q, M.BUBBLE); } } }
+      if (F.extinguish && rnd() < 0.3) { const j = pick(3); if (j >= 0) { const b = t[j]; if (KIND[b] === K.fire && b !== M.ETERNAL) t[j] = rnd() < 0.5 ? M.SMOKE : 0; else if (b === M.EMBER) this.put(j, M.CHARCOAL); } }
+      if (F.condense && rnd() < 0.15) { const j = pick(3); if (j >= 0 && (t[j] === M.STEAM || t[j] === M.FOG)) this.put(j, M.WATER); }
+      if (F.fungus && rnd() < 0.006 && room(M.MUSHROOM, 300)) { const j = near(); if (j >= 0 && t[j] === 0 && solidBelow(j)) { const damp = around(j, M.WATER) + around(j, M.MUD) + around(j, M.MOSS) + around(j, M.SWAMP); if (damp || rnd() < 0.35) this.put(j, M.MUSHROOM); } }
+      if (F.regen && rnd() < 0.02) { const j = pick(3); if (j >= 0) { const b = t[j]; if (b === M.ASH || b === M.CHARCOAL) this.put(j, M.DIRT); else if (b === M.DIRT && j >= w && t[j - w] === 0 && room(M.PLANT, 400)) this.put(j - w, M.PLANT); } }
+      if (F.germinate && rnd() < 0.05) { const j = pick(4); if (j >= 0 && t[j] === M.SEED) this.put(j, M.PLANT); }
+      if (F.darkness) this.darkAt = this.frame;
+      if (F.magnetize && rnd() < 0.5) { const j = pick(10); if (j >= 0 && (ATTRACT[t[j]] || t[j] === M.IRON) && reach(j)) { const dx = x - (j % w), dy = y - ((j / w) | 0), d = Math.hypot(dx, dy) || 1, sp = Math.min(3, 0.8 + d * 0.3); fling(j, dx / d * sp, dy / d * sp - 0.6); } }
+      if (F.chain && rnd() < 0.01) {
+        const j = pick(7);
+        if (j >= 0 && CONDUCT[t[j]]) { // a spark leaps to the nearest metal and runs along it
+          const jx = j % w, jy = (j / w) | 0, n = Math.max(Math.abs(jx - x), Math.abs(jy - y));
+          for (let k = 1; k < n; k++) { const px = Math.round(x + (jx - x) * k / n + (rnd() - 0.5)), py = Math.round(y + (jy - y) * k / n), q = py * w + px; if (px >= 0 && py >= 0 && px < w && py < h && openAt(q)) this.put(q, M.LIGHTNING); }
+          this.charge(j, jx, jy);
+        }
+      }
       if (F.paint && rnd() < 0.08) { const j = near(); if (j >= 0 && t[j] && t[j] !== t[i] && KIND[t[j]] !== K.gas && KIND[t[j]] !== K.fire) { this.tint[j] = id; this.hasTint = true; } }
       return false;
     }
@@ -1985,6 +2025,29 @@ svg .fill { fill: currentColor; stroke: none; }
       }
       if (lift) { // the updraft reaches down to the ground below, so it lifts what's lying there
         for (let dy = 1; dy < 12 && ay0 + dy < ah; dy++) { const ai = (ay0 + dy) * aw + ax0; if (this.asolid[ai]) { const gi = ai - aw; if (this.av[gi] > -2.2) this.av[gi] -= 0.05; break; } }
+      }
+    }
+    /* A whirl of air around a spot (vortex): the wind goes round it, with a little lift in the middle. */
+    airSwirl(x, y, id) {
+      if (!this.au) this.initAir();
+      if (!this.airOn) { this.airSolids(); this.airOn = true; }
+      const A = this.A, aw = this.aw, ah = this.ah, cx = (x / A) | 0, cy = (y / A) | 0, dir = id & 1 ? 1 : -1;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        if (!dx && !dy) continue;
+        const ax = cx + dx, ay = cy + dy; if (ax < 0 || ay < 0 || ax >= aw || ay >= ah) continue;
+        const ai = ay * aw + ax; if (this.asolid[ai]) continue;
+        const d = Math.hypot(dx, dy), k = 0.05 / d;
+        if (this.au[ai] * this.au[ai] + this.av[ai] * this.av[ai] < 6) { this.au[ai] += -dy * k * dir - dx * k * 0.25; this.av[ai] += dx * k * dir - dy * k * 0.25 - 0.01; }
+      }
+    }
+    /* A puff of pressure (pulse): pushes the air out in a ring. */
+    airPop(x, y, k) {
+      if (!this.au) this.initAir();
+      if (!this.airOn) { this.airSolids(); this.airOn = true; }
+      const A = this.A, aw = this.aw, ax = Math.min(aw - 1, (x / A) | 0), ay = Math.min(this.ah - 1, (y / A) | 0);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const bx = ax + dx, by = ay + dy; if (bx < 0 || by < 0 || bx >= aw || by >= this.ah) continue;
+        const ai = by * aw + bx; if (!this.asolid[ai]) this.ap[ai] = Math.min(10, this.ap[ai] + k * (dx || dy ? 0.5 : 1));
       }
     }
     /* A storm blows the air about: gusts swing back and forth with a little lift. */
@@ -3555,6 +3618,24 @@ svg .fill { fill: currentColor; stroke: none; }
         const cm = p.sk && LIKE[p.sk] === p.m ? p.sk : p.m;
         px[y * this.w + x] = C[cm * 16 + (p.s >> 4)];
       }
+      // Darkness: a shadowy patch around anything with the darkness effect.
+      if (this.darkAt && this.frame - this.darkAt < 6) {
+        const W = this.w, H = this.h; let n = 0;
+        for (let i = 0; i < t.length && n < 2500; i++) {
+          const m = t[i]; if (!m) continue;
+          const cm = this.hasSkins && this.skin[i] && LIKE[this.skin[i]] === m ? this.skin[i] : m;
+          if (!FX[cm] || !FX[cm].darkness) continue;
+          n++;
+          const gx = i % W, gy = (i / W) | 0;
+          for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+            const d = dx * dx + dy * dy; if (d > 16) continue;
+            const x = gx + dx, y = gy + dy; if (x < 0 || y < 0 || x >= W || y >= H) continue;
+            const j = y * W + x, a = d <= 4 ? 150 : d <= 9 ? 110 : 70;
+            if (t[j] === 0) { if ((px[j] >>> 24) < a) px[j] = (a << 24) >>> 0; }
+            else if (FX[t[j]] === undefined || t[j] !== m) { const c = px[j]; px[j] = ((c & 0xff000000) | (((c >> 17) & 0x7f) << 16) | (((c >> 9) & 0x7f) << 8) | ((c >> 1) & 0x7f)) >>> 0; }
+          }
+        }
+      }
       if (this.creatures.length) this.renderCreatures(px);
     }
 
@@ -4264,15 +4345,15 @@ svg .fill { fill: currentColor; stroke: none; }
     fog: /\b(blind\w*|fog|foggy|mist|misty|haze|hazy|smok\w*|obscur\w*|murk\w*|steamy)\b/,
     burn: /\b(blaz\w*|burn\w*|fiery|flaming|flames|scorch\w*|inferno|ignit\w*|molten)\b/,
     melt: /\b(warm\w*|melts?|melting|heats?|thaw\w*)\b/,
-    corrode: /\b(acid\w*|corros\w*|corrod\w*|dissolv\w*|erod\w*)\b/,
+    corrode: /\b(acid\w*|corros\w*|corrod\w*|erod\w*)\b/,
     rain: /\b(rain\w*|drizzl\w*|showers?|downpour|drip\w*)\b/,
     grow: /\b(grows?(?! (\w+ )?crystals?)|growing(?! (\w+ )?crystals?)|spread\w*|multipl\w*|creep\w*|overgrow\w*)\b/,
-    plants: /\b(sprout\w*|plant life|plants?|vegetation|grass\w*|garden\w*|terraform\w*|foliage|greenery|jungle|forest|leafy|vines?)\b/,
+    plants: /\b(sprout\w*|plant life|(grows?|growing|brings?) (\w+ )?plants?|plants? grow\w*|vegetation|grass\w*|garden\w*|terraform\w*|foliage|greenery|jungle|forest|leafy|vines?)\b/,
     bloom: /\b(bloom\w*|blossom\w*|flowers?|petals?|pollen\w*)\b/,
     web: /\b(webs?|silk\w*|threads?|spins?|spinner|spinning|weav\w*)\b/,
     paint: /\b(paint\w*|colou?rs (the|everything|it)|dyes?|stain\w*|tints?)\b/,
     slime: /\b(slim(e|y)|gooey|ooz(e|es|ing))\b/,
-    pull: /\b(pulls?|pulling|gravit\w*|black hole|vacuum\w*|suck\w*|draws? (things |everything )?in|magneti[cz]\w*)\b/,
+    pull: /\b(pulls?|pulling|gravit\w*|black hole|vacuum\w*|suck\w*|draws? (things |everything )?in)\b/,
     push: /\b(push\w*|repel\w*|force ?field|shockwaves?|knocks? (things )?back|blows? (things )?away)\b/,
     levitate: /\b(levitat\w*|floats? up\w*|hover\w*|anti-?gravity|weightless|lifts? (things|everything))\b/,
     shake: /\b(shak\w*|quak\w*|tremor\w*|rumbl\w*|vibrat\w*|crumbl\w*)\b/,
@@ -4280,13 +4361,36 @@ svg .fill { fill: currentColor; stroke: none; }
     crystal: /\b(crystalli[sz]\w*|grows? (\w+ )?crystals?|crystal growth|geodes?)\b/,
     rust: /\b(rust\w*|tarnish\w*|oxidi[sz]\w*)\b/,
     heat: /\b(boil\w*|scald\w*|hot springs?|sizzl\w*|heats? up|evaporat\w*|dries|drying)\b/,
-    sponge: /\b(absorb\w*|soak\w*|spong\w*|thirsty|dries up)\b/,
+    sponge: /\b(absorbs? water|soak\w*|spong\w*|thirsty|dries up)\b/,
     purify: /\b(purif\w*|cleans?\b|cleaning|cleanse\w*|filter\w*|heal\w*)\b/,
     bubbles: /\b(bubbl\w*|fizz\w*|froth\w*|foam\w*)\b/,
     teleport: /\b(teleport\w*|blink\w*|warp\w*|portals?|vanish\w*|disappear\w*|wormholes?)\b/,
     sparkles: /\b(sparkl\w*|glitter\w*|twinkl\w*|shimmer\w*|dazzl\w*)\b/,
     life: /\b(attracts? (bugs|insects|life|butterflies)|brings? life|teem\w*|full of life|life-giving|swarm\w*|fireflies|butterfl\w*)\b/,
     rainbow: /\b(rainbow\w*|prism\w*|colou?rful|multi-?colou?r\w*|aurora\w*|kaleidoscop\w*)\b/,
+    vortex: /\b(vortex\w*|whirlpool\w*|spiral\w*|funnel\w*|swirl\w*)\b/,
+    orbit: /\b(orbit\w*|circl\w*|revolv\w*|satellites?)\b/,
+    bounce: /\b(bounc\w*|springy|boing\w*)\b/,
+    pulse: /\b(puls\w*|throb\w*|waves of energy|heartbeat\w*)\b/,
+    splash: /\b(splash\w*|spray\w*|splatter\w*|sprinkl\w*)\b/,
+    erupt: /\b(erupt\w*|volcan\w*|spew\w*|geysers?)\b/,
+    disintegrate: /\b(disintegrat\w*|crumbles? (things|everything)|turns? (things |everything )?(in)?to dust|pulveri[sz]\w*|grinds?)\b/,
+    transmute: /\b(transmut\w*|transform\w* (things|everything|nearby)|changes? (things|everything)|alchem\w*)\b/,
+    duplicate: /\b(duplicat\w*|cop(y|ies) (things|everything)|clon\w*|replicat\w*)\b/,
+    absorb: /\b(absorbs?(?! water)\w*|consum\w*|devour\w*|engulf\w*|eats? (things|everything|anything))\b/,
+    dissolve: /\b(dissolv\w*|soluble)\b/,
+    liquefy: /\b(liquef\w*|turns? (things |everything )?(in)?to liquid|melts? (stone|rock|everything))\b/,
+    contaminate: /\b(contamin\w*|pollut\w*|toxic\w*|poison\w*|taint\w*)\b/,
+    decay: /\b(decay\w*|rot(s|ting|ten)?|compost\w*|wither\w*|decompos\w*)\b/,
+    ferment: /\b(ferment\w*|yeast\w*)\b/,
+    extinguish: /\b(extinguish\w*|douse\w*|puts? out (fire|fires|flames)|smother\w*|quench\w*)\b/,
+    condense: /\b(condens\w*|dew\w*|droplets?|collects? water)\b/,
+    fungus: /\b(fung\w*|mushroom\w*|mou?ld(y|s)?|spores?|toadstool\w*)\b/,
+    regen: /\b(regenerat\w*|restor\w*|reviv\w*|renew\w*|rejuvenat\w*|grows? back|heals? the (land|earth|ground))\b/,
+    germinate: /\b(germinat\w*|seedlings?|sow\w*)\b/,
+    darkness: /(?<!(lights?|lit|lighting) up (the )?|illuminat\w* (the )?|brighten\w* (the )?|in the |at |by |of the |through the )\b(dark\w*|shadow\w*|gloom\w*|night\w*)\b/,
+    magnetize: /\b(magnet\w*)\b/,
+    chain: /\b(chain lightning|arc(s|ing)?|jumps? between|conduct\w*|currents?|wires?)\b/,
   };
   const FX_NAMES = Object.keys(FX_WORDS);
   const GLOW_WORDS = /\b(glow\w*|luminous|radiant|lights? up|shin(es|ing|y)|aurora|lamp)\b/;
@@ -4304,7 +4408,7 @@ svg .fill { fill: currentColor; stroke: none; }
     'cloud crystal': { effects: ['rain'] },
     'water moss': { effects: ['rain'] },
   };
-  const FX_LABEL = { wind: 'wind', freeze: 'frost', sparks: 'sparks', fog: 'fog', burn: 'burns', melt: 'melts ice', corrode: 'corrodes', rain: 'rain', grow: 'spreads', plants: 'sprouts plants', bloom: 'flowers', web: 'webs', paint: 'paints', slime: 'slime', pull: 'pulls things in', push: 'pushes things away', levitate: 'levitates', shake: 'shakes the ground', petrify: 'turns things to stone', crystal: 'grows crystals', rust: 'rusts metal', heat: 'boils water', sponge: 'soaks up water', purify: 'purifies', bubbles: 'bubbles', teleport: 'teleports', sparkles: 'sparkles', life: 'attracts life', rainbow: 'rainbow colours', };
+  const FX_LABEL = { wind: 'wind', freeze: 'frost', sparks: 'sparks', fog: 'fog', burn: 'burns', melt: 'melts ice', corrode: 'corrodes', rain: 'rain', grow: 'spreads', plants: 'sprouts plants', bloom: 'flowers', web: 'webs', paint: 'paints', slime: 'slime', pull: 'pulls things in', push: 'pushes things away', levitate: 'levitates', shake: 'shakes the ground', petrify: 'turns things to stone', crystal: 'grows crystals', rust: 'rusts metal', heat: 'boils water', sponge: 'soaks up water', purify: 'purifies', bubbles: 'bubbles', teleport: 'teleports', sparkles: 'sparkles', life: 'attracts life', rainbow: 'rainbow colours', vortex: 'vortex', orbit: 'orbits', bounce: 'bounces things', pulse: 'pulses', splash: 'splashes', erupt: 'erupts', disintegrate: 'disintegrates', transmute: 'transmutes', duplicate: 'duplicates', absorb: 'absorbs', dissolve: 'dissolves', liquefy: 'liquefies', contaminate: 'contaminates', decay: 'decays', ferment: 'ferments', extinguish: 'puts out fire', condense: 'condenses', fungus: 'mushrooms', regen: 'regenerates', germinate: 'germinates', darkness: 'darkness', magnetize: 'magnetic pull', chain: 'chain lightning', };
   function fxFor(spec, name, desc) {
     const said = (name + ' ' + desc).toLowerCase(), fx = {}, fix = FX_FIXES[String(name).trim().toLowerCase()];
     const listed = (Array.isArray(spec && spec.effects) ? spec.effects : []).concat(fix ? fix.effects : []).map((v) => String(v).toLowerCase());
@@ -4321,7 +4425,7 @@ svg .fill { fill: currentColor; stroke: none; }
     if (!fx) return e;
     // Explosives would set themselves off with their own sparks or flames: they only go off when you bring fire.
     const boomy = (e.props && e.props.volatile) || (e.like && MATS[e.like].props && MATS[e.like].props.volatile);
-    if (boomy) { delete fx.sparks; delete fx.burn; }
+    if (boomy) { delete fx.sparks; delete fx.burn; delete fx.erupt; delete fx.chain; }
     // Spreading: only solids and powders, and not ones that already grow their own way (that would never stop).
     if (fx.grow && !e.creature) {
       const kind = e.like ? MATS[e.like].kind : e.kind, ownGrow = (e.props && e.props.grows) || (e.like && MATS[e.like].props && MATS[e.like].props.grows);
@@ -4554,7 +4658,7 @@ svg .fill { fill: currentColor; stroke: none; }
     const STATES = ['powder', 'liquid', 'gas', 'solid'];
     const PROPS = ['glows', 'sticky', 'bouncy', 'flammable', 'explosive', 'evaporates', 'melts', 'freezes', 'grows', 'magnetic', 'conducts', 'hot', 'cold'];
     const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg', 'paddle', 'amphibian'];
-    const EFFECTS = ['wind', 'freeze', 'sparks', 'fog', 'burn', 'melt', 'corrode', 'rain', 'grow', 'plants', 'bloom', 'web', 'paint', 'slime', 'pull', 'push', 'levitate', 'shake', 'petrify', 'crystal', 'rust', 'heat', 'sponge', 'purify', 'bubbles', 'teleport', 'sparkles', 'life', 'rainbow'];
+    const EFFECTS = ['wind', 'freeze', 'sparks', 'fog', 'burn', 'melt', 'corrode', 'rain', 'grow', 'plants', 'bloom', 'web', 'paint', 'slime', 'pull', 'push', 'levitate', 'shake', 'petrify', 'crystal', 'rust', 'heat', 'sponge', 'purify', 'bubbles', 'teleport', 'sparkles', 'life', 'rainbow', 'vortex', 'orbit', 'bounce', 'pulse', 'splash', 'erupt', 'disintegrate', 'transmute', 'duplicate', 'absorb', 'dissolve', 'liquefy', 'contaminate', 'decay', 'ferment', 'extinguish', 'condense', 'fungus', 'regen', 'germinate', 'darkness', 'magnetize', 'chain'];
     const ABILITIES = ['breathes_fire', 'glows', 'fireproof', 'grazes', 'lays_eggs', 'eats_bugs', 'eats_fish', 'scared_of_fire', 'leaves_trail', 'fast', 'slow', 'zaps', 'explodes'];
     // Materials an object can be built from (names must match the game).
     // Built-in elements an invented element can act like.
@@ -4595,7 +4699,7 @@ svg .fill { fill: currentColor; stroke: none; }
     - type: "element" (a material: powder, liquid, gas or solid), "creature" (an animal or being that moves) or "object" (a small build made of existing materials).
     - description: one short, fun sentence (max 80 characters) saying what it does in the game. Only describe what it really does with the behaves_like, properties, movement, abilities and effects you pick. Never promise something the game can't do.
     - colors: 2 to 4 hex colours like "#ff8800" that suit it.
-    - effects: what it does to the world around it, so the description comes true, from: ${EFFECTS.join(', ')}. (wind = stirs up gusts that blow sand about; freeze = freezes water and makes snow; sparks = crackles with little lightning sparks; fog = gives off fog; burn = sets things alight; melt = melts ice and snow; corrode = eats away nearby things; rain = drips water; grow = slowly spreads itself; plants = sprouts plant life from soil; bloom = makes flowers sprout; web = spins sticky webs; paint = colours what it touches; slime = leaves slime; pull = draws loose things and creatures towards it; push = shoves them away; levitate = makes nearby powders float up; shake = shakes the ground so piles slump and crumble; petrify = turns sand, mud and water to stone; crystal = grows crystals; rust = rusts metal; heat = boils water into steam; sponge = soaks up water; purify = turns acid and swamp into clean water; bubbles = gives off bubbles; teleport = blinks to nearby spots; sparkles = twinkles; life = fireflies, bees or butterflies appear near it; rainbow = paints things in rainbow colours). Use [] if none fit.
+    - effects: what it does to the world around it, so the description comes true, from: ${EFFECTS.join(', ')}. (wind = stirs up gusts that blow sand about; freeze = freezes water and makes snow; sparks = crackles with little lightning sparks; fog = gives off fog; burn = sets things alight; melt = melts ice and snow; corrode = eats away nearby things; rain = drips water; grow = slowly spreads itself; plants = sprouts plant life from soil; bloom = makes flowers sprout; web = spins sticky webs; paint = colours what it touches; slime = leaves slime; pull = draws loose things and creatures towards it; push = shoves them away; levitate = makes nearby powders float up; shake = shakes the ground so piles slump and crumble; petrify = turns sand, mud and water to stone; crystal = grows crystals; rust = rusts metal; heat = boils water into steam; sponge = soaks up water; purify = turns acid and swamp into clean water; bubbles = gives off bubbles; teleport = blinks to nearby spots; sparkles = twinkles; life = fireflies, bees or butterflies appear near it; rainbow = paints things in rainbow colours; vortex = whirls the air round it; orbit = flings grains round it; bounce = makes nearby powders hop; pulse = sends out puffs of air; splash = flings nearby liquid; erupt = shoots out embers and lava; disintegrate = breaks solids into sand and dust; transmute = changes nearby things into random elements; duplicate = copies nearby things; absorb = eats nearby grains and grows; dissolve = salt and sugar melt away into water; liquefy = turns stone to lava and melts ice, wax and chocolate; contaminate = turns water to swamp and dirt to mud; decay = rots plants and wood into dirt; ferment = turns sugar, honey and plants into bubbly slime; extinguish = puts out fire; condense = turns steam and fog into water; fungus = grows mushrooms; regen = turns ash green again; germinate = makes seeds sprout; darkness = casts a shadow; magnetize = pulls metal; chain = sparks leap along metal). Use [] if none fit.
     For an element also give:
     - behaves_like: the game element it acts most like, so it really does that in the world (it keeps its own name and colours).
       Choose from: ${LIKE_NAMES.join(', ')}. Examples: Thunderbolt -> Lightning, Magma Goo -> Lava, Frost Flame -> Cold Fire,
