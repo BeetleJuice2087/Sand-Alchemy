@@ -361,6 +361,16 @@ svg .fill { fill: currentColor; stroke: none; }
 .ai-log { max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 0.7rem; line-height: 1.35; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px; margin: 8px 0; color: var(--muted); user-select: text; -webkit-user-select: text; }
 .settings-first { margin-top: 4px; border-top: 0; padding-top: 0; }
 
+/* Stickman controls: shown only while he's in the world */
+.stick-pad { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 4; display: flex; justify-content: space-between; align-items: flex-end; pointer-events: none; }
+.stick-pad[hidden] { display: none; }
+.sp-group { display: flex; gap: 10px; }
+.sp-btn { pointer-events: auto; width: 60px; height: 60px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.35); background: rgba(14, 15, 38, 0.5);
+  color: #fff; font-size: 24px; line-height: 1; display: grid; place-items: center; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  backdrop-filter: blur(3px); cursor: pointer; }
+.sp-btn.on { background: rgba(255, 74, 90, 0.55); border-color: rgba(255, 255, 255, 0.7); }
+.sp-jump { width: 70px; height: 70px; font-size: 28px; }
+
 </style>
 </head>
 <body>
@@ -392,6 +402,10 @@ svg .fill { fill: currentColor; stroke: none; }
     <div class="loupe" id="loupe" hidden><div class="loupe-name" id="loupe-name"></div><canvas id="loupe-canvas" width="130" height="130"></canvas></div>
     <svg class="line-preview" id="line-preview" hidden aria-hidden="true"><line class="lp-body" stroke-linecap="round" /><line class="lp-mid" stroke-linecap="round" /></svg>
     <div class="tip" id="tip">Draw with your finger. Mix things together and see what you discover!<small>Straight line: hold Shift, or double-tap and drag.</small></div>
+    <div class="stick-pad" id="stick-pad" hidden>
+      <div class="sp-group"><button type="button" class="sp-btn" data-k="left" aria-label="Walk left">&#9664;</button><button type="button" class="sp-btn" data-k="right" aria-label="Walk right">&#9654;</button></div>
+      <button type="button" class="sp-btn sp-jump" data-k="jump" aria-label="Jump">&#10514;</button>
+    </div>
     <div class="current" id="current" aria-live="polite"><i class="sw" id="current-sw"></i><span id="current-name">Sand</span><small id="current-size">M</small></div>
     <div class="toast" id="toast" aria-live="polite"></div>
   </main>
@@ -462,7 +476,7 @@ svg .fill { fill: currentColor; stroke: none; }
         <div class="row ai-url-row"><input type="url" id="ai-url" autocomplete="off" spellcheck="false" aria-label="Worker address"><button class="ghost-btn" id="ai-test" type="button">Test</button></div>
       </details>
     </section>
-    <p class="game-ver" id="game-ver">Game version: Oct 10, update 19</p>
+    <p class="game-ver" id="game-ver">Game version: Oct 12, update 20</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -655,10 +669,16 @@ svg .fill { fill: currentColor; stroke: none; }
     LIGHTHOUSE: 248, PYRAMID: 249, IGLOO: 250, CANDLE: 251, FOUNTAIN: 252, GINGERBREAD: 253,
     WALL: 226, // took the last invention slot (saved inventions move to a free one)
     WEB: 225,
+    // Third wave (Science and Space), past 255 now that the grid stores 16-bit ids.
+    GRAVBOMB: 254, LN2: 255, SPONGE: 256, VIRUS: 257, CURE: 258, C4: 259, TNT: 260, THERMITE: 261,
+    HYDROGEN: 262, OXYGEN: 263, PLUTONIUM: 264, ANTIMATTER: 265, VACUUM: 266, PORTALIN: 267, PORTALOUT: 268,
+    BLACKHOLE: 269, WHITEHOLE: 270, STICKMAN: 271,
   };
-  // Ids from BUILTIN up to EXTRA-1 are kept free for things the AI invents
-  // (254 and 255 are the Dropper and Eraser tools in the game).
-  const BUILTIN = 109, EXTRA = 225, COUNT = 254;
+  // Ids from BUILTIN up to EXTRA-1, and from SLOTS2 up to COUNT-1, are kept free for things the AI
+  // invents. The grid stores ids in 16 bits, so there's plenty of room: the third wave of built-ins
+  // lives at 254..279 and the second block of invention slots starts at 280.
+  const BUILTIN = 109, EXTRA = 225, SLOTS2 = 280, COUNT = 512;
+  const isSlot = (id) => (id >= BUILTIN && id < EXTRA) || (id >= SLOTS2 && id < COUNT);
 
   /* kind: how it moves.  density: heavier things sink through lighter
      liquids.  slip: how readily a powder slides off a pile (0..1).
@@ -1162,8 +1182,79 @@ svg .fill { fill: currentColor; stroke: none; }
     key2: { C: M.CANDY, H: M.CHOCOLATE, G: M.GLASS },
     rows: ['......CCC......', '....CCCCCCC....', '..CCCCCCCCCCC..', 'CCCCCCCCCCCCCCC', '.HHHHHHHHHHHHH.', '.HGGHHH_HHHGGH.', '.HGGHHH_HHHGGH.', '.HHHHHH_HHHHHH.'] });
 
+  /* ---------------- Third wave: Science and Space ---------------- */
+  const SCI = (id, o) => def(id, Object.assign({ science: true }, o));
+  const SPACE = (id, o) => def(id, Object.assign({ space: true }, o));
+  SCI(M.HYDROGEN, { key: 'hydrogen', name: 'Hydrogen', kind: 'gas', density: 0.02, flam: 1, burn: 2,
+    colors: ['#e6f2ff', '#bcd8ff'], alpha: 70, hint: 'Split water with a bolt from the sky.', recipe: 'Water + Lightning',
+    desc: 'The lightest gas: it races upwards. Burns with a pop and leaves water behind. Mixed with Oxygen it explodes!' });
+  SCI(M.OXYGEN, { key: 'oxygen', name: 'Oxygen', kind: 'gas', density: 0.15, flam: 1, burn: 3,
+    colors: ['#d8f4ff', '#a8e0ff'], alpha: 60, hint: 'What plants breathe out into the clouds.', recipe: 'Plant + Cloud',
+    desc: 'Drifts about in the air. Fire roars through it, and it makes Hydrogen explode.' });
+  SCI(M.LN2, { key: 'ln2', name: 'Liquid Nitrogen', kind: 'liquid', density: 0.8, spread: 4,
+    colors: ['#e8fbff', '#b6ecff'], alpha: 200, hint: 'Air so cold it turned into a liquid.', recipe: 'Dry Ice + Cloud',
+    desc: 'Super cold. Freezes water and lava on the spot, and boils away whenever it touches anything warmer.' });
+  SCI(M.SPONGE, { key: 'sponge', name: 'Sponge', kind: 'solid', density: 1, flam: 0.15, burn: 40,
+    colors: ['#ffe066', '#7a5a12'], hint: 'A soft sea creature that loves soap.', recipe: 'Coral + Soap',
+    desc: 'Stays put and soaks up water (it darkens as it fills). Water spreads right through it. Heat dries it out.' });
+  SCI(M.VIRUS, { key: 'virus', name: 'Virus', kind: 'liquid', density: 1.15, spread: 2, flam: 0.35, burn: 12,
+    ramp: ['#c050ff', '#7a1ab8', '#e08aff', '#5a0a90'], alpha: 235, hint: 'Germs brewed from two kinds of green gunk.', recipe: 'Slime + Swamp',
+    desc: 'Turns everything it touches into more virus! Fire kills it, and Cure turns infected things back.' });
+  SCI(M.CURE, { key: 'cure', name: 'Cure', kind: 'liquid', density: 1.25, spread: 3,
+    colors: ['#b8fff0', '#4ae0c0'], alpha: 225, hint: 'A healing potion for a sickness.', recipe: 'Virus + Potion',
+    desc: 'Turns virus back into whatever it was before it got infected.' });
+  SCI(M.TNT, { key: 'tnt', name: 'TNT', kind: 'solid', density: 5, flam: 1, burn: 1,
+    ramp: ['#e8402a', '#b82a1a', '#e8402a', '#3a1a12'], hint: 'Gunpowder wrapped in paper.', recipe: 'Gunpowder + Paper',
+    desc: 'Light it and the fuse fizzes for a moment, then BOOM. A blast sets it off straight away.' });
+  SCI(M.C4, { key: 'c4', name: 'C-4', kind: 'solid', density: 5, flam: 1, burn: 1,
+    colors: ['#e8e0c8', '#bdb394'], hint: 'An explosive you can shape like clay.', recipe: 'TNT + Clay',
+    desc: 'Stays exactly where you put it. The biggest ordinary explosive: fire, sparks, electricity or a blast set it off.',
+    props: { volatile: true } });
+  SCI(M.THERMITE, { key: 'thermite', name: 'Thermite', kind: 'powder', density: 3.5, slip: 0.6, flam: 0.3, burn: 1,
+    colors: ['#a0705a', '#5a3e34'], hint: 'Rust and metal powder: burns hotter than fire.', recipe: 'Rust + Iron Filings',
+    desc: 'Burns white-hot once lit. Melts metal, stone and glass, and water can\u2019t put it out.' });
+  SCI(M.PLUTONIUM, { key: 'plutonium', name: 'Plutonium', kind: 'powder', density: 9.5, slip: 0.4,
+    colors: ['#b8ff6a', '#3a8a2a'], hint: 'A glowing stone forged with metal.', recipe: 'Glowstone + Metal',
+    desc: 'Heavy, glowing and warm (it boils water). Pile too much in one place and it goes critical!',
+    props: { glow: [140, 255, 90] } });
+  SCI(M.ANTIMATTER, { key: 'antimatter', name: 'Anti-Matter', kind: 'gas', density: 0.1,
+    ramp: ['#ffe0ff', '#ff8ae8', '#ffffff', '#c08aff'], alpha: 210, hint: 'The opposite of everything: nothing meets plasma.', recipe: 'Void + Plasma',
+    desc: 'Floats about. Anything it touches is wiped out together with it, in a flash.',
+    props: { glow: [255, 170, 240] } });
+  SPACE(M.VACUUM, { key: 'vacuum', name: 'Vacuum', kind: 'solid', density: 9,
+    ramp: ['#4a5068', '#2a2e3e', '#6a7290', '#1a1c28'], hint: 'Emptiness that wants to be filled.', recipe: 'Void + Cloud',
+    desc: 'Sucks the air and anything loose nearby into itself, and it\u2019s gone.' });
+  SPACE(M.PORTALIN, { key: 'portalin', name: 'Portal In', kind: 'solid', density: 99,
+    colors: ['#ffc070', '#ff7a1a'], hint: 'A mirror into the void.', recipe: 'Mirror + Void',
+    desc: 'Anything that falls or flows into it, even creatures, comes out of a Portal Out. Bigger brush, taller portal.',
+    props: { glow: [255, 150, 50] } });
+  SPACE(M.PORTALOUT, { key: 'portalout', name: 'Portal Out', kind: 'solid', density: 99,
+    colors: ['#8ad8ff', '#1a7aff'], hint: 'Found together with Portal In.', recipe: 'Mirror + Void',
+    desc: 'Where everything that goes into a Portal In comes back out. Bigger brush, taller portal.',
+    props: { glow: [60, 150, 255] } });
+  SPACE(M.BLACKHOLE, { key: 'blackhole', name: 'Black Hole', kind: 'solid', density: 99,
+    ramp: ['#000000', '#12041f', '#000000', '#2a0a4a'], hint: 'A star swallowed by the void.', recipe: 'Void + Star',
+    desc: 'Its gravity pulls in everything loose from far away, even creatures, and swallows it. What it swallows comes out of White Holes.',
+    props: { glow: [255, 120, 40] } });
+  SPACE(M.WHITEHOLE, { key: 'whitehole', name: 'White Hole', kind: 'solid', density: 99,
+    ramp: ['#ffffff', '#e8f0ff', '#fffbe0', '#d8e4ff'], hint: 'A black hole seen in a mirror.', recipe: 'Black Hole + Mirror',
+    desc: 'Pushes everything away with gravity, and spits out whatever Black Holes have swallowed.',
+    props: { glow: [220, 235, 255] } });
+  SPACE(M.GRAVBOMB, { key: 'gravbomb', name: 'Gravity Bomb', kind: 'powder', density: 4, slip: 0.3,
+    ramp: ['#6a3aff', '#2a1a6a', '#9a7aff', '#1a0a3a'], hint: 'A black hole packed into a bomb.', recipe: 'Black Hole + Gunpowder',
+    desc: 'Falls until it touches something and sticks there. A moment later: a huge gravity push that flings everything loose away.' });
+  creature(M.STICKMAN, { key: 'stickman', name: 'Stickman', colors: ['#ffffff', '#ff4a5a'], move: 'player', player: true,
+    hint: 'A drawing that came to life.', recipe: 'Paper + Life Essence',
+    desc: 'You control him: arrows or the on-screen buttons to walk, jump with Space or \u2191. A long fall knocks him out and he comes back where you placed him.',
+    pal: { h: '#ffd23a', k: '#ffffff', s: '#ff4a5a' }, ax: 2, ay: 7,
+    sprite: { walk: [['.hhh.', '.hhh.', '.sks.', 'k.k.k', '..k..', '..k..', '.k.k.', 'k...k'],
+                     ['.hhh.', '.hhh.', '.sks.', '.kkk.', '..k..', '..k..', '..k..', '.k.k.']],
+              stand: [['.hhh.', '.hhh.', '.sks.', '.kkk.', 'k.k.k', '..k..', '.k.k.', '.k.k.']],
+              jump: [['.hhh.', '.hhh.', 'ksksk', '..k..', '..k..', '.k.k.', 'k...k', '.....']],
+              down: [['.....', '.....', '.....', '.....', '.....', '.....', 'hh.k.', 'hhkkk']] } });
+
   /* Cauldron recipes: unordered pairs of ingredients. */
-  const MAGIC = new Uint8Array(COUNT * COUNT);
+  const MAGIC = new Uint16Array(COUNT * COUNT);
   function brew(a, b, out) { MAGIC[a * COUNT + b] = out; MAGIC[b * COUNT + a] = out; }
   brew(M.PLANT, M.WATER, M.ESSENCE);
   brew(M.WATER, M.CRYSTAL, M.RAINBOW);
@@ -1277,6 +1368,24 @@ svg .fill { fill: currentColor; stroke: none; }
   brew(M.WAX, M.EMBER, M.CANDLE);
   brew(M.STONE, M.WATER, M.FOUNTAIN);
   brew(M.CHOCOLATE, M.CANDY, M.GINGERBREAD);
+  // Third wave
+  brew(M.WATER, M.LIGHTNING, M.HYDROGEN);
+  brew(M.PLANT, M.CLOUD, M.OXYGEN);
+  brew(M.DRYICE, M.CLOUD, M.LN2);
+  brew(M.CORAL, M.SOAP, M.SPONGE);
+  brew(M.SLIME, M.SWAMP, M.VIRUS);
+  brew(M.VIRUS, M.POTION, M.CURE);
+  brew(M.GUNPOWDER, M.PAPER, M.TNT);
+  brew(M.TNT, M.CLAY, M.C4);
+  brew(M.RUST, M.IRON, M.THERMITE);
+  brew(M.GLOWSTONE, M.METAL, M.PLUTONIUM);
+  brew(M.VOID, M.PLASMA, M.ANTIMATTER);
+  brew(M.VOID, M.CLOUD, M.VACUUM);
+  brew(M.MIRROR, M.VOID, M.PORTALIN);
+  brew(M.VOID, M.STAR, M.BLACKHOLE);
+  brew(M.BLACKHOLE, M.MIRROR, M.WHITEHOLE);
+  brew(M.BLACKHOLE, M.GUNPOWDER, M.GRAVBOMB);
+  brew(M.PAPER, M.ESSENCE, M.STICKMAN);
 
   /* ---------------- Mixing by traits ----------------
      Any pair without its own recipe still makes something sensible, worked
@@ -1313,6 +1422,10 @@ svg .fill { fill: currentColor; stroke: none; }
     [M.PEARL]: 'magic earth', [M.OWL]: 'life air', [M.BAT]: 'life air', [M.TURTLE]: 'life wet', [M.MOUSE]: 'life earth',
     [M.OCTOPUS]: 'life wet', [M.PHOENIX]: 'life hot magic', [M.UNICORN]: 'life magic', [M.DUCK]: 'life wet',
     [M.LIGHTHOUSE]: 'earth magic', [M.PYRAMID]: 'earth sandy', [M.IGLOO]: 'cold', [M.CANDLE]: 'hot fuel', [M.FOUNTAIN]: 'wet earth', [M.GINGERBREAD]: 'earth',
+    [M.HYDROGEN]: 'air fuel', [M.OXYGEN]: 'air', [M.LN2]: 'cold wet', [M.SPONGE]: 'life wet', [M.VIRUS]: 'life wet', [M.CURE]: 'magic wet',
+    [M.TNT]: 'boom', [M.C4]: 'boom earth', [M.THERMITE]: 'hot metal', [M.PLUTONIUM]: 'hot metal magic', [M.ANTIMATTER]: 'void',
+    [M.VACUUM]: 'void', [M.PORTALIN]: 'magic void', [M.PORTALOUT]: 'magic', [M.BLACKHOLE]: 'void', [M.WHITEHOLE]: 'magic air',
+    [M.GRAVBOMB]: 'boom magic', [M.STICKMAN]: 'life',
   };
   const T = {};
   for (const k in TRAITS) T[k] = new Set(TRAITS[k].split(' '));
@@ -1447,6 +1560,9 @@ svg .fill { fill: currentColor; stroke: none; }
   rx(M.SOAP, M.TAR, 0.06, KEEP, E);
   rx(M.SOAP, M.MUD, 0.05, KEEP, M.WATER);
   [M.SUGAR, M.CARAMEL, M.CANDY, M.COTTONCANDY, M.WAX, M.MELTWAX, M.PAPER, M.TAR, M.SOAP, M.GLITTER, M.PEARL].forEach((b) => rx(M.ACID, b, 0.12, KEEP, E));
+  // Third wave in the world
+  [M.SPONGE, M.TNT, M.C4, M.THERMITE].forEach((b) => rx(M.ACID, b, 0.08, KEEP, E));
+  rx(M.CURE, M.ACID, 0.05, KEEP, M.WATER);
 
   // Things that set flammable neighbours alight.
   const IGNITERS = new Set([M.FIRE, M.LAVA, M.LIGHTNING, M.ETERNAL, M.EMBER, M.PLASMA, M.ROCKET]);
@@ -1454,7 +1570,8 @@ svg .fill { fill: currentColor; stroke: none; }
   // Turn '#rrggbb' into [r, g, b].
   function hex(h) { const n = parseInt(h.slice(1, 7), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255, h.length > 7 ? parseInt(h.slice(7, 9), 16) : 255]; }
   // Empty slots waiting for inventions.
-  for (let id = BUILTIN; id < EXTRA; id++) def(id, { key: 'slot' + id, name: '', kind: 'empty', density: 0, colors: ['#000000', '#000000'], alpha: 0, reserved: true, hidden: true });
+  for (let id = 1; id < COUNT; id++) if (!MATS[id] && !isSlot(id)) def(id, { key: 'spare' + id, name: '', kind: 'empty', density: 0, colors: ['#000000', '#000000'], alpha: 0, hidden: true, spare: true });
+  for (let id = 1; id < COUNT; id++) if (isSlot(id) && !MATS[id]) def(id, { key: 'slot' + id, name: '', kind: 'empty', density: 0, colors: ['#000000', '#000000'], alpha: 0, reserved: true, hidden: true });
   MATS.forEach((m) => { m.rgb = (m.colors || m.ramp).map(hex); if (!m.colors) m.colors = [m.ramp[0], m.ramp[m.ramp.length - 1]]; });
 
   /* Register something the AI invented in slot `id`, brewed from a + b.
@@ -1476,7 +1593,7 @@ svg .fill { fill: currentColor; stroke: none; }
     return m;
   }
 
-  window.SandMats = { M, MATS, COUNT, BUILTIN, EXTRA, RX, KEEP, IGNITERS, MAGIC, traitMix, hex, invent };
+  window.SandMats = { M, MATS, COUNT, BUILTIN, EXTRA, SLOTS2, isSlot, RX, KEEP, IGNITERS, MAGIC, traitMix, hex, invent };
 })();
 
 </script>
@@ -1521,7 +1638,7 @@ svg .fill { fill: currentColor; stroke: none; }
   }
   [M.WATER, M.SEAWATER, M.SWAMP, M.POTION].forEach((m) => { WATERY[m] = 1; });
   [M.DIRT, M.MUD, M.SAND, M.ASH, M.CLAY].forEach((m) => { SOIL[m] = 1; });
-  [M.FIRE, M.COLDFIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.ACID, M.PLASMA, M.LIGHTNING, M.EMBER, M.VOID, M.ROCKET].forEach((m) => { DEADLY[m] = 1; });
+  [M.FIRE, M.COLDFIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.ACID, M.PLASMA, M.LIGHTNING, M.EMBER, M.VOID, M.ROCKET, M.VIRUS, M.ANTIMATTER].forEach((m) => { DEADLY[m] = 1; });
   [M.FIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.PLASMA, M.LIGHTNING, M.EMBER].forEach((m) => { HOT[m] = 1; });
   const BUGS = new Uint8Array(COUNT), FISHY = new Uint8Array(COUNT);
   BUGS[M.FIREFLY] = BUGS[M.BEE] = BUGS[M.ANT] = BUGS[M.BUTTERFLY] = BUGS[M.CATERPILLAR] = 1; FISHY[M.FISH] = FISHY[M.TADPOLE] = 1;
@@ -1530,7 +1647,14 @@ svg .fill { fill: currentColor; stroke: none; }
   const ABIL = []; MATS.forEach((m) => { if (m && m.abil) ABIL[m.id] = m.abil; });
   const FX = []; // effects an invented element has on the world around it (wind, frost, sparks...)
   // How hard each explosive goes off (gunpowder = 1). Other explosive inventions use 1.6.
-  const BOOM = new Float32Array(COUNT); BOOM[M.GUNPOWDER] = 1; BOOM[M.NITRO] = 3;
+  const BOOM = new Float32Array(COUNT); BOOM[M.GUNPOWDER] = 1; BOOM[M.NITRO] = 3; BOOM[M.TNT] = 2.2; BOOM[M.C4] = 3.6; BOOM[M.HYDROGEN] = 0.8;
+  // Third wave: what each new thing can't touch.
+  const PROOF = new Uint8Array(COUNT); // walls, holes and portals: nothing breaks, eats or infects them
+  [M.WALL, M.BLACKHOLE, M.WHITEHOLE, M.PORTALIN, M.PORTALOUT, M.CAULDRON].forEach((m) => { PROOF[m] = 1; });
+  const NOFADE = new Uint8Array(COUNT); [M.NEON, M.HYDROGEN, M.OXYGEN, M.ANTIMATTER].forEach((m) => { NOFADE[m] = 1; }); // gases that never fade away
+  const MELTABLE = new Uint8Array(COUNT); // what white-hot thermite melts into lava
+  [M.METAL, M.STEEL, M.IRON, M.COPPER, M.RUST, M.STONE, M.BRICK, M.OBSIDIAN, M.SANDSTONE, M.GLASS, M.DIAMOND, M.MAGNET, M.BATTERY,
+    M.GOLD, M.CRYSTAL, M.VACUUM, M.CLAY].forEach((m) => { MELTABLE[m] = 1; });
   const boomOf = (m) => BOOM[m] || 1.6;
   const FIERY = new Uint8Array(COUNT);
   [M.FIRE, M.COLDFIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.PLASMA, M.LIGHTNING, M.EMBER, M.ROCKET].forEach((m) => { FIERY[m] = 1; });
@@ -1561,7 +1685,7 @@ svg .fill { fill: currentColor; stroke: none; }
   const PROP = new Uint8Array(COUNT), STICKY = new Uint8Array(COUNT), BOUNCE = new Uint8Array(COUNT), ATTRACT = new Uint8Array(COUNT);
   const CONDUCT = new Uint8Array(COUNT), POWER = new Uint8Array(COUNT), VOLATILE = new Uint8Array(COUNT), MAGNETIC = new Uint8Array(COUNT);
   const EVAP = [], MELTS = [], FREEZES = [], SETS = [], GROWS = [], GLOWS = [];
-  const COLD = new Uint8Array(COUNT); [M.ICE, M.SNOW, M.FROSTCRYSTAL, M.COLDFIRE, M.DRYICE].forEach((m) => { COLD[m] = 1; });
+  const COLD = new Uint8Array(COUNT); [M.ICE, M.SNOW, M.FROSTCRYSTAL, M.COLDFIRE, M.DRYICE, M.LN2].forEach((m) => { COLD[m] = 1; });
   function buildProps(mt) {
     const m = mt.id;
     STICKY[m] = BOUNCE[m] = ATTRACT[m] = MAGNETIC[m] = CONDUCT[m] = POWER[m] = VOLATILE[m] = PROP[m] = 0;
@@ -1581,7 +1705,7 @@ svg .fill { fill: currentColor; stroke: none; }
   const MOVE = []; MATS.forEach((m) => { if (m && m.move) MOVE[m.id] = m.move; }); // built-in creatures that use the shared movements
   // Inventions that act like a built-in element: the grid holds the built-in, and a
   // 'skin' layer remembers which invention it really is (for its colours and name).
-  const LIKE = new Uint8Array(COUNT);
+  const LIKE = new Uint16Array(COUNT);
   function refresh(id) {
     const m = MATS[id];
     LIKE[id] = m.like || 0;
@@ -1604,15 +1728,15 @@ svg .fill { fill: currentColor; stroke: none; }
   class World {
     constructor(w, h) {
       this.w = w; this.h = h; const n = w * h;
-      this.t = new Uint8Array(n);       // material
+      this.t = new Uint16Array(n);      // material
       this.life = new Uint8Array(n);    // countdown / growth energy
       this.shade = new Uint8Array(n);   // colour variation
-      this.fuel = new Uint8Array(n);    // for fire: what is burning
+      this.fuel = new Uint16Array(n);   // for fire: what is burning
       this.stamp = new Uint8Array(n);   // moved-this-frame marker
       this.vx = new Float32Array(n); this.vy = new Float32Array(n); // bouncy-ball velocity
       this.fx = new Float32Array(n); this.fy = new Float32Array(n); // and sub-cell position
-      this.skin = new Uint8Array(n);    // which invention a cell really is (see LIKE)
-      this.tint = new Uint8Array(n);    // painted cells: whose colours they show (they still act like themselves)
+      this.skin = new Uint16Array(n);   // which invention a cell really is (see LIKE)
+      this.tint = new Uint16Array(n);   // painted cells: whose colours they show (they still act like themselves)
       this.hasTint = false;
       this.hasSkins = false; this.curBase = 0; this.curSkin = 0;
       this.clock = 1;
@@ -1708,6 +1832,21 @@ svg .fill { fill: currentColor; stroke: none; }
       if (b === M.GUNPOWDER) { this.blast(j % this.w, (j / this.w) | 0, 1); return; }
       if (b === M.FIREWORK) { this.put(j, M.ROCKET); return; }
       if (b === M.FROSTBOMB) { this.frostBlast(j % this.w, (j / this.w) | 0); return; }
+      if (b === M.TNT || b === M.THERMITE) { // a fuse: TNT fizzes then goes off; thermite burns white-hot for a while
+        if (!this.fuel[j]) { this.fuel[j] = 1; this.life[j] = b === M.TNT ? 40 + ri(25) : 150 + ri(70); }
+        return;
+      }
+      if (b === M.HYDROGEN) { // burns with a pop and leaves water; with oxygen about, it explodes
+        const w = this.w, x = j % w, y = (j / w) | 0; let ox = 0;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= this.h) continue;
+          const q = yy * w + xx; if (this.t[q] === M.OXYGEN) { this.t[q] = 0; ox++; }
+        }
+        this.put(j, M.FIRE, ox ? 10 + ri(8) : 5 + ri(6)); this.fuel[j] = M.HYDROGEN;
+        if (ox >= 2) this.pendingBlasts.push(x, y, Math.min(1.8, 0.5 + ox * 0.1));
+        else if (ox) this.airPop(x, y, 1);
+        return;
+      }
       if (VOLATILE[b]) { this.t[j] = 0; this.blast(j % this.w, (j / this.w) | 0, boomOf(b)); return; }
       this.put(j, M.FIRE, Math.min(255, BURN[b] + ri(BURN[b] + 20)));
       this.fuel[j] = b;
@@ -1723,8 +1862,12 @@ svg .fill { fill: currentColor; stroke: none; }
         const x = cx + dx, y = cy + dy;
         if (x < 0 || y < 0 || x >= w || y >= h) continue;
         const j = y * w + x, b = this.t[j];
-        if (b === M.METAL || b === M.OBSIDIAN || b === M.DIAMOND || b === M.BRICK || b === M.STEEL || b === M.WALL) continue;
+        if (b === M.METAL || b === M.OBSIDIAN || b === M.DIAMOND || b === M.BRICK || b === M.STEEL || PROOF[b] || b === M.VACUUM) continue;
         if (b === M.GUNPOWDER) { this.t[j] = 0; this.pendingBlasts.push(x, y, 1); continue; }
+        if (b === M.TNT || b === M.HYDROGEN) { this.t[j] = 0; this.pendingBlasts.push(x, y, BOOM[b]); continue; } // a blast sets TNT off straight away
+        if (b === M.THERMITE) { if (!this.fuel[j]) { this.fuel[j] = 1; this.life[j] = 150 + ri(70); } continue; }
+        if (b === M.GRAVBOMB) { this.fuel[j] = 1; this.life[j] = 1 + ri(3); continue; }
+        if (b === M.PLUTONIUM) { this.t[j] = 0; if (power >= 3 && rnd() < 0.12) this.pendingBlasts.push(x, y, 3); continue; } // a chain reaction
         if (VOLATILE[b]) { this.t[j] = 0; this.pendingBlasts.push(x, y, boomOf(b)); continue; } // nitro caught in a blast goes off too
         if (b === M.GLASS) { this.put(j, M.SAND); continue; }
         if (b === M.STONE) { if (rnd() < 0.5) this.put(j, M.SAND); continue; }
@@ -2070,8 +2213,21 @@ svg .fill { fill: currentColor; stroke: none; }
     stepFlying() {
       const w = this.w, h = this.h, t = this.t, list = this.flying, keep = [];
       const open = (m) => m === 0 || KIND[m] === K.gas || KIND[m] === K.fire || KIND[m] === K.spark || KIND[m] === K.cloud;
-      for (const p of list) {
+      const H = this.holes, bh = H ? H.bh : null, wh = H ? H.wh : null;
+      flight: for (const p of list) {
         p.vy = Math.min(p.vy + 0.16, 6); p.vx *= 0.985;
+        if (H) { // gravity: black holes pull grains in (they curve and orbit), white holes push them away
+          for (let e = 0; e < bh.length; e += 2) {
+            const dx = bh[e] - p.x, dy = bh[e + 1] - p.y, d2 = dx * dx + dy * dy + 1;
+            if (d2 < 3) { this.swallowed(p.m, p.sk); continue flight; }
+            const d = Math.sqrt(d2), a = Math.min(0.55, 16 / d2); p.vx += dx / d * a; p.vy += dy / d * a;
+          }
+          for (let e = 0; e < wh.length; e += 2) {
+            const dx = p.x - wh[e], dy = p.y - wh[e + 1], d2 = dx * dx + dy * dy + 1, d = Math.sqrt(d2), a = Math.min(0.5, 12 / d2);
+            p.vx += dx / d * a; p.vy += dy / d * a;
+          }
+          if (p.vx > 9) p.vx = 9; else if (p.vx < -9) p.vx = -9; if (p.vy < -9) p.vy = -9;
+        }
         if (this.airOn) { // grains in the air are carried along by the wind (light ones more)
           const wd = this.windAt(p.x, p.y), k = 0.12 / (0.6 + (p.wt || 2) * 0.25), boost = 2.4 / (0.6 + (p.wt || 2) * 0.25), ws = Math.hypot(wd[0], wd[1]); if (ws > 6) { wd[0] *= 6 / ws; wd[1] *= 6 / ws; }
           p.vx += (wd[0] * boost - p.vx) * k; p.vy += (wd[1] * boost - p.vy) * k; p.vx = Math.max(-9, Math.min(9, p.vx));
@@ -2083,7 +2239,15 @@ svg .fill { fill: currentColor; stroke: none; }
           if (nx < 0) { nx = 0; p.vx = -p.vx * 0.4; } else if (nx > w - 1) { nx = w - 1; p.vx = -p.vx * 0.4; }
           if (ny < 0) { ny = 0; p.vy = 0; }
           const cx = Math.round(nx), cy = Math.round(ny);
-          if (cy >= h || !open(t[cy * w + cx])) { landed = true; break; }
+          if (cy >= h || !open(t[cy * w + cx])) {
+            const b = cy < h ? t[cy * w + cx] : 0;
+            if (b === M.BLACKHOLE) { this.swallowed(p.m, p.sk); continue flight; }
+            if (b === M.VACUUM) continue flight;                                 // sucked away
+            if (b === M.PORTALIN && this.portOut && this.portOut.length) {          // out of a Portal Out, still flying
+              const q = this.exitCell(); if (q >= 0) { p.x = q % w; p.y = (q / w) | 0; break; }
+            }
+            landed = true; break;
+          }
           p.x = nx; p.y = ny;
         }
         if (landed) this.land(p); else keep.push(p);
@@ -2105,6 +2269,145 @@ svg .fill { fill: currentColor; stroke: none; }
       // Nowhere to go (buried in a crowd): it's simply lost in the blast.
     }
 
+    /* ---------------- Space: holes, portals and gravity bombs ---------------- */
+    // Something a black hole swallowed: kept (up to a point) for white holes to spit out again.
+    swallowed(m, sk) {
+      const st = this.bhStore || (this.bhStore = []);
+      if (m && st.length < 6000) st.push(m, sk || 0);
+    }
+    swallow(j) { this.swallowed(this.t[j], this.hasSkins ? this.skin[j] : 0); this.t[j] = 0; this.skin[j] = 0; if (this.hasTint) this.tint[j] = 0; }
+    // An empty cell right next to a random Portal Out (-1 if there isn't one).
+    exitCell() {
+      const L = this.portOut, w = this.w, h = this.h, t = this.t;
+      for (let tries = 0; tries < 6; tries++) {
+        const o = L[ri(L.length)]; if (t[o] !== M.PORTALOUT) continue;
+        const ox = o % w, oy = (o / w) | 0, s0 = ri(8);
+        for (let k = 0; k < 8; k++) {
+          const d = (s0 + k) & 7, xx = ox + NX[d], yy = oy + NY[d];
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const q = yy * w + xx; if (t[q] === 0) return q;
+        }
+      }
+      return -1;
+    }
+    // Move cell j out of a Portal Out.
+    teleport(j) {
+      const q = this.exitCell(); if (q < 0) return false;
+      const t = this.t;
+      t[q] = t[j]; this.life[q] = this.life[j]; this.shade[q] = this.shade[j]; this.fuel[q] = this.fuel[j]; this.skin[q] = this.skin[j];
+      if (this.hasTint) { this.tint[q] = this.tint[j]; this.tint[j] = 0; }
+      t[j] = 0; this.skin[j] = 0; this.life[j] = 0; this.fuel[j] = 0;
+      this.stamp[q] = this.clock;
+      return true;
+    }
+    /* Every frame: black holes pull, white holes push (and spit out what was swallowed), vacuums suck. */
+    forces() {
+      const H = this.holes, w = this.w, h = this.h, t = this.t;
+      const openAt = (j) => t[j] === 0 || KIND[t[j]] === K.gas || KIND[t[j]] === K.fire;
+      const loose = (m) => { const k = KIND[m]; return m && (k === K.powder || k === K.liquid || k === K.gas || k === K.fire || k === K.float || k === K.skypowder) && !BOUNCE[m] && m !== M.GRAVBOMB; };
+      const grab = (j, vx, vy) => {
+        this.flying.push({ m: t[j], sk: this.hasSkins ? this.skin[j] : 0, l: this.life[j], s: this.shade[j], x: j % w, y: (j / w) | 0, vx, vy, wt: 1 });
+        t[j] = 0; this.skin[j] = 0; this.life[j] = 0; if (this.hasTint) this.tint[j] = 0;
+      };
+      // Gravity reaches out along straight lines from the hole: whatever loose thing each line meets first
+      // (the surface facing the hole) may get pulled in or pushed off, more often the closer it is.
+      const pass = (list, n, R, sign, k0, self) => {
+        if (!list.length) return;
+        const rays = Math.min(10, 3 + Math.round(n / (list.length / 2)));  // bigger holes reach out more
+        for (let e = 0; e < list.length; e += 2) {
+          const x = list[e], y = list[e + 1];
+          for (let k = 0; k < rays && this.flying.length < 4000; k++) {
+            const a = rnd() * Math.PI * 2, ux = Math.cos(a), uy = Math.sin(a);
+            let j = -1, d = 2;
+            for (; d <= R; d++) {
+              const xx = Math.round(x + ux * d), yy = Math.round(y + uy * d);
+              if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
+              const q = yy * w + xx, b = t[q];
+              if (b === 0 || b === M.SPARKLE || b === self) continue; // its own body doesn't block it
+              j = q; break;
+            }
+            if (j < 0 || !loose(t[j]) || rnd() > k0 * 14 / (d + 8)) continue; // weaker far away
+            const dx = (j % w) - x, dy = ((j / w) | 0) - y;
+            if (sign < 0) { const v = Math.min(3.4, 1.6 + d * 0.03); grab(j, -dx / d * v, Math.max(-9, -dy / d * v - 0.08 * d / v)); } // aimed so it arcs right into the hole
+            else { const sp = Math.min(4.5, 1 + 30 * k0 / (d + 6)), sx = dx > 0 ? 1 : dx < 0 ? -1 : (rnd() < 0.5 ? -1 : 1); grab(j, dx / d * sp * 1.2 + sx * sp * 0.4, -(sp * 0.9 + 0.8) + (dy < 0 ? dy / d * sp * 0.6 : 0)); } // thrown outwards and up, clear of the ground
+          }
+        }
+      };
+      pass(H.bh, H.bhN, 70, -1, 1, M.BLACKHOLE);
+      pass(H.wh, H.whN, 45, 1, 1.2, M.WHITEHOLE);
+      pass(H.vac, H.vacN, 16, -1, 0.9, M.VACUUM);
+      for (let e = 0; e < H.vac.length; e += 2) if (rnd() < 0.5) this.airForce(H.vac[e], H.vac[e + 1], -1, false); // the air rushes in too
+      // White holes spit out whatever the black holes swallowed.
+      const st = this.bhStore;
+      if (H.wh.length && st && st.length) {
+        for (let e = 0; e < H.wh.length && st.length; e += 2) {
+          for (let k = 0; k < 3 && st.length; k++) {
+            const d = ri(8), xx = H.wh[e] + NX[d] * 2, yy = H.wh[e + 1] + NY[d] * 2;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h || t[yy * w + xx] !== 0) continue;
+            const sk = st.pop(), m = st.pop();
+            if (sk === 0xFFFF) { const c = this.spawn(m, xx, yy, false); if (c) c.vy = -0.5; continue; } // a creature it swallowed
+            if (!MATS[m] || MATS[m].reserved) continue;
+            if (this.flying.length < 5000) this.flying.push({ m, sk, l: this.defaultLife(m), s: ri(256), x: xx, y: yy, vx: NX[d] * 2.6 + (rnd() - 0.5), vy: NY[d] * 2.6 - 0.6, wt: 1 });
+          }
+        }
+      }
+      // Creatures are drawn in (and swallowed) or pushed away too.
+      if (this.creatures.length) for (const c of this.creatures) {
+        if (c.dead || c.s === 9) continue;
+        const near = (list, R) => { let best = -1, bd = R * R; for (let e = 0; e < list.length; e += 2) { const d = (list[e] - c.x) ** 2 + (list[e + 1] - c.y) ** 2; if (d < bd) { bd = d; best = e; } } return best < 0 ? null : [list[best], list[best + 1], Math.sqrt(bd)]; };
+        const move = (hx, hy, d, sp) => { const nx = c.x + (hx - c.x) / (d || 1) * sp, ny = c.y + (hy - c.y) / (d || 1) * sp; if (this.canBe(c.k, this.cellAt(nx, ny))) { c.x = Math.max(1, Math.min(w - 2, nx)); c.y = Math.max(0, Math.min(h - 1, ny)); } };
+        let n = near(H.bh, 60);
+        if (n) { if (n[2] < 3) { c.dead = 'void'; if (c.k !== M.STICKMAN) this.swallowed(c.k, 0xFFFF); continue; } move(n[0], n[1], n[2], Math.min(1.4, 14 / (n[2] + 6))); }
+        n = near(H.vac, 14);
+        if (n) { if (n[2] < 2.5) { c.dead = 'void'; continue; } move(n[0], n[1], n[2], Math.min(1, 6 / (n[2] + 3))); }
+        n = near(H.wh, 40);
+        if (n) move(n[0], n[1], n[2], -Math.min(1.4, 14 / (n[2] + 6)));
+      }
+    }
+    /* A gravity bomb goes off: no crater, just a huge push that flings everything loose outwards. */
+    gravPush(cx, cy) {
+      const w = this.w, h = this.h, t = this.t; let power = 1;
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { // nearby bombs join in
+        const x = cx + dx, y = cy + dy; if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const j = y * w + x; if (t[j] === M.GRAVBOMB) { t[j] = 0; power += 0.12; }
+      }
+      power = Math.min(power, 4);
+      const R = Math.round(24 + 8 * power);
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const d2 = dx * dx + dy * dy; if (d2 > R * R || d2 === 0) continue;
+        const x = cx + dx, y = cy + dy; if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const j = y * w + x, b = t[j]; if (!b) continue;
+        const k = KIND[b]; if (!(k === K.powder || k === K.liquid || k === K.gas || k === K.fire || k === K.float || k === K.skypowder) || this.flying.length > 7000) continue;
+        const d = Math.sqrt(d2), sp = Math.min(9, (4 + 2.5 * power) * (1 - d / R) + 1.5), sx = dx > 0 ? 1 : dx < 0 ? -1 : (rnd() < 0.5 ? -1 : 1);
+        this.flying.push({ m: b, sk: this.hasSkins ? this.skin[j] : 0, l: this.life[j], s: this.shade[j], x, y, vx: dx / d * sp * 1.1 + sx * sp * 0.3, vy: -(sp * 0.8 + 0.6) + (dy < 0 ? dy / d * sp * 0.5 : 0), wt: 1 });
+        t[j] = 0; this.skin[j] = 0; this.life[j] = 0; if (this.hasTint) this.tint[j] = 0;
+      }
+      for (const p of this.flying) { const dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy); if (d < R && d > 0) { const k = (1 - d / R) * 4 * power; p.vx += dx / d * k; p.vy += dy / d * k; } }
+      for (const c of this.creatures) { // creatures get thrown too
+        const dx = c.x - cx, dy = c.y - cy, d = Math.hypot(dx, dy); if (d >= R || c.dead) continue;
+        const n = Math.round((1 - d / R) * 10 * power);
+        for (let s2 = 0; s2 < n; s2++) { const nx = c.x + dx / (d || 1), ny = c.y + dy / (d || 1) - 0.3; if (!this.canBe(c.k, this.cellAt(nx, ny))) break; c.x = Math.max(1, Math.min(w - 2, nx)); c.y = Math.max(0, Math.min(h - 1, ny)); }
+        if (c.k === M.STICKMAN) c.vy = -1.2;
+      }
+      this.shove(cx, cy, 6, 1.5 + power); // and a rush of air
+      for (let k = 0; k < 48; k++) { // a ring of light
+        const a = k / 48 * Math.PI * 2, r = 4 + ri(3), x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
+        if (x >= 0 && y >= 0 && x < w && y < h && t[y * w + x] === 0) { this.put(y * w + x, M.SPARKLE, 8 + ri(12)); this.stamp[y * w + x] = this.clock; }
+      }
+    }
+    /* Plutonium gone critical: a huge blast and a white-hot flash. */
+    nuke(cx, cy) {
+      const w = this.w, h = this.h;
+      this.hurtCreatures(cx, cy, 30, 'burn');
+      this.blast(cx, cy, 6);
+      for (let k = 0; k < 160; k++) {
+        const a = rnd() * Math.PI * 2, d = 18 * Math.sqrt(rnd()), x = Math.round(cx + Math.cos(a) * d), y = Math.round(cy + Math.sin(a) * d);
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const j = y * w + x, b = this.t[j];
+        if (b === 0 || KIND[b] === K.gas) { this.put(j, rnd() < 0.4 ? M.PLASMA : M.FIRE, 20 + ri(30)); this.stamp[j] = this.clock; }
+      }
+    }
+
     /* A lightning bolt from (x, y) zig-zags down until it hits something. */
     bolt(x, y) {
       const w = this.w, h = this.h;
@@ -2119,7 +2422,7 @@ svg .fill { fill: currentColor; stroke: none; }
           const k = yy * w + xx, c = this.t[k];
           if (c === M.SAND) this.put(k, M.GLASS);
           else if (c === M.GLASS && Math.abs(dx) + Math.abs(dy) <= 2) this.put(k, M.CRYSTAL);
-          else if (c === M.WATER && rnd() < 0.3) this.put(k, M.STEAM);
+          else if (c === M.WATER && rnd() < 0.3) this.put(k, rnd() < 0.25 ? (rnd() < 0.6 ? M.HYDROGEN : M.OXYGEN) : M.STEAM); // now and then it splits water
           else if (c === M.ICE || c === M.SNOW) this.put(k, M.WATER);
           else if (FLAM[c] > 0) this.ignite(k);
           else if (CONDUCT[c] && this.life[k] === 0 && this.fuel[k] === 0) this.life[k] = 8; // a strike on a wire sends a spark along it
@@ -2137,11 +2440,23 @@ svg .fill { fill: currentColor; stroke: none; }
       let clouds = 0;
       if (this.frame % 20 === 1) { // where are the magnets, and is there any glue about?
         const mg = []; let sticky = false;
-        for (let k = 0, n = t.length; k < n; k++) { const v = t[k]; if (MAGNETIC[v] && mg.length < 128) mg.push(k % w, (k / w) | 0); else if (STICKY[v]) sticky = true; else if (BOUNCE[v]) this.hasBouncy = true; }
+        const H = { bh: [], wh: [], vac: [], bhN: 0, whN: 0, vacN: 0 }, outs = [];
+        const keep = (list, n, k) => { // a fair sample of up to 24 spots of each hole
+          if (list.length < 48) list.push(k % w, (k / w) | 0);
+          else { const r = ri(n); if (r < 24) { list[r * 2] = k % w; list[r * 2 + 1] = (k / w) | 0; } }
+        };
+        for (let k = 0, n = t.length; k < n; k++) {
+          const v = t[k];
+          if (MAGNETIC[v] && mg.length < 128) mg.push(k % w, (k / w) | 0); else if (STICKY[v]) sticky = true; else if (BOUNCE[v]) this.hasBouncy = true;
+          else if (v === M.BLACKHOLE) keep(H.bh, ++H.bhN, k); else if (v === M.WHITEHOLE) keep(H.wh, ++H.whN, k);
+          else if (v === M.VACUUM) keep(H.vac, ++H.vacN, k); else if (v === M.PORTALOUT && outs.length < 3000) outs.push(k);
+        }
         this.magnets = mg; this.hasSticky = sticky;
+        this.holes = H.bhN || H.whN || H.vacN ? H : null; this.portOut = outs;
       }
       this.blastsNow = 0;
       if (this.airOn) this.stepAir();
+      if (this.holes) this.forces();
       if (this.flying.length) this.stepFlying();
       // Explosions queued by the last frame's chain reactions.
       if (this.pendingFrost && this.pendingFrost.length) {
@@ -2216,6 +2531,7 @@ svg .fill { fill: currentColor; stroke: none; }
     }
 
     powder(i, x, y, m) {
+      if (m === M.GRAVBOMB && this.fuel[i]) return; // stuck fast
       if (ATTRACT[m] && this.magnets.length && this.pull(i, x, y)) return;
       if (this.hasSticky && this.stuck(i, x, y)) return;
       if (BOUNCE[m] && this.bounce(i, x, y, m)) return;
@@ -2273,6 +2589,20 @@ svg .fill { fill: currentColor; stroke: none; }
     gas(i, x, y, m) {
       const t = this.t, life = this.life;
       if (m === M.SMOKE) { this.smoke(i, x, y); return; }
+      if (m === M.ANTIMATTER || m === M.OXYGEN) {
+        // Both drift about in every direction (no rising). Anti-matter wipes out whatever it touches, and itself.
+        const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+        if (xx < 0 || yy < 0 || xx >= this.w || yy >= this.h) return;
+        const j = yy * this.w + xx, b = t[j];
+        if (m === M.ANTIMATTER && b && b !== M.ANTIMATTER && !PROOF[b] && KIND[b] !== K.spark) {
+          t[j] = 0; this.skin[j] = 0; if (this.hasTint) this.tint[j] = 0;
+          this.put(i, M.SPARKLE, 4 + ri(6)); this.stamp[i] = this.clock;
+          if (rnd() < 0.06) this.airPop(x, y, 0.8);
+          return;
+        }
+        if (b === 0 && rnd() < (m === M.OXYGEN ? 0.6 : 0.7)) this.swap(i, j);
+        return;
+      }
       if (m === M.FOG) { this.fog(i, x, y); return; }
       if (m === M.PLASMA) {
         if (life[i]-- <= 1) { t[i] = 0; return; }
@@ -2280,7 +2610,7 @@ svg .fill { fill: currentColor; stroke: none; }
         if (xx >= 0 && yy >= 0 && xx < this.w && yy < this.h && t[yy * this.w + xx] === 0) this.swap(i, yy * this.w + xx);
         return;
       }
-      if (m !== M.NEON && life[i]-- <= 1) { // neon never fades
+      if (!NOFADE[m] && life[i]-- <= 1) { // neon and hydrogen never fade
         if (m === M.STEAM) {
           if (y < this.h * 0.3 && rnd() < 0.6) this.put(i, M.CLOUD);
           else if (rnd() < 0.4) this.put(i, M.WATER);
@@ -2333,6 +2663,7 @@ svg .fill { fill: currentColor; stroke: none; }
       }
       if (life[i]-- <= 1) {
         const f = fuel[i];
+        if (f === M.HYDROGEN) { if (rnd() < 0.5) this.put(i, M.WATER); else t[i] = 0; return; } // burnt hydrogen is water
         if ((f === M.PLANT || f === M.WOOD) && rnd() < 0.5) this.put(i, M.ASH);
         else if (rnd() < (f === M.OIL ? 0.5 : 0.22)) this.put(i, M.SMOKE);
         else t[i] = 0;
@@ -2591,6 +2922,135 @@ svg .fill { fill: currentColor; stroke: none; }
             if (xx >= 0 && yy >= 0 && xx < w && yy < h && t[yy * w + xx] === 0) { this.put(yy * w + xx, M.SPARKLE, 10 + ri(20)); this.stamp[yy * w + xx] = this.clock; }
           }
           break;
+        // ---------------- Third wave ----------------
+        case M.LN2: {
+          // Boils away slowly in open air, and fast against anything warmer, freezing it as it goes.
+          if (y > 0 && t[i - w] === 0 && rnd() < 0.002) { this.put(i - w, M.FOG); this.stamp[i - w] = this.clock; t[i] = 0; break; }
+          const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
+          const j = yy * w + xx, b = t[j];
+          if (!b || b === M.LN2 || COLD[b] || PROOF[b] || KIND[b] === K.gas) break;
+          if (b === M.WATER || b === M.SEAWATER || b === M.SWAMP || b === M.POTION || b === M.CURE) this.put(j, M.ICE);
+          else if (b === M.LAVA) this.put(j, M.OBSIDIAN);
+          else if (b === M.STEAM || b === M.FOG || b === M.CLOUD) this.put(j, M.SNOW);
+          else if (KIND[b] === K.fire && b !== M.ETERNAL) t[j] = 0;
+          else if (b === M.MUD) this.put(j, M.DIRT);
+          if (rnd() < 0.015) { if (rnd() < 0.4 && y > 0 && t[i - w] === 0) { this.put(i - w, M.FOG); this.stamp[i - w] = this.clock; } t[i] = 0; }
+          break;
+        }
+        case M.SPONGE: {
+          // life = how much water it holds (0..12). It soaks water up, shares it with drier sponge, and dries out near heat.
+          for (let k = 0; k < 3; k++) {
+            const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            const j = yy * w + xx, b = t[j];
+            if ((b === M.WATER || b === M.SEAWATER || b === M.SWAMP) && life[i] < 12 && rnd() < 0.6) { t[j] = 0; this.skin[j] = 0; life[i] = Math.min(12, life[i] + 2); }
+            else if (b === M.SPONGE && life[j] < life[i] && rnd() < 0.5) { life[j]++; life[i]--; } // water spreads right through it
+            else if ((FIERY[b] || HOT[b]) && life[i] > 0 && rnd() < 0.2) { life[i]--; if (y > 0 && t[i - w] === 0) { this.put(i - w, M.STEAM); this.stamp[i - w] = this.clock; } }
+          }
+          break;
+        }
+        case M.VIRUS: {
+          // Infects whatever it touches; the cell remembers what it was (in fuel) so Cure can turn it back.
+          if (rnd() > 0.15) break;
+          const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
+          const j = yy * w + xx, b = t[j];
+          if (!b || b === M.VIRUS || b === M.CURE || PROOF[b] || b === M.ANTIMATTER || b === M.VACUUM) break;
+          const kb = KIND[b]; if (kb === K.fire || kb === K.spark || kb === K.gas || kb === K.cloud) break;
+          if (this.near(xx, yy, M.CURE)) break; // Cure protects what it's touching
+          const was = this.matAt(j);
+          this.put(j, M.VIRUS); this.fuel[j] = was; this.stamp[j] = this.clock;
+          break;
+        }
+        case M.CURE: {
+          for (let k = 0; k < 2; k++) {
+            const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            const j = yy * w + xx;
+            if (t[j] === M.VIRUS) {
+              const f = this.fuel[j];
+              if (f && f !== M.VIRUS && MATS[f] && !MATS[f].reserved) this.put(j, f); else t[j] = 0;
+              this.stamp[j] = this.clock;
+              if (rnd() < 0.05) { t[i] = 0; break; } // it gets used up
+            }
+          }
+          break;
+        }
+        case M.TNT:
+          if (this.fuel[i]) { // lit: the fuse fizzes, then boom
+            if (life[i]-- <= 1) { t[i] = 0; this.blast(x, y, BOOM[M.TNT]); break; }
+            if (y > 0 && t[i - w] === 0 && rnd() < 0.35) { this.put(i - w, M.SPARKLE, 3 + ri(5)); this.stamp[i - w] = this.clock; }
+          }
+          break;
+        case M.THERMITE: {
+          if (!this.fuel[i]) break;
+          // Lit: white-hot. Melts metal and stone into lava, boils water, lights anything that burns, and sinks through what it melts.
+          if (life[i]-- <= 1) { this.put(i, rnd() < 0.5 ? M.LAVA : M.METAL); break; }
+          for (let k = 0; k < 2; k++) {
+            const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            const j = yy * w + xx, b = t[j];
+            if (b === 0) { if (NY[d] < 0 && rnd() < 0.25) { this.put(j, M.FIRE, 4 + ri(8)); this.stamp[j] = this.clock; } continue; }
+            if (b === M.THERMITE) { if (!this.fuel[j]) { this.fuel[j] = 1; life[j] = 150 + ri(70); } continue; }
+            if (PROOF[b]) continue;
+            if (b === M.WATER || b === M.SEAWATER) this.put(j, M.STEAM);
+            else if (b === M.ICE || b === M.SNOW) this.put(j, M.WATER);
+            else if (b === M.SAND) { if (rnd() < 0.2) this.put(j, M.GLASS); }
+            else if (MELTABLE[b]) { if (rnd() < 0.07) this.put(j, M.LAVA); }
+            else if (FLAM[b] > 0) this.ignite(j);
+            else if (KIND[b] === K.solid && rnd() < 0.02) this.put(j, M.LAVA);
+          }
+          break;
+        }
+        case M.PLUTONIUM: {
+          if (rnd() < 0.02) { // warm: boils water, melts ice
+            const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+            if (xx >= 0 && yy >= 0 && xx < w && yy < h) { const j = yy * w + xx, b = t[j]; if (b === M.WATER || b === M.SEAWATER) this.put(j, M.STEAM); else if (b === M.ICE || b === M.SNOW) this.put(j, M.WATER); }
+          }
+          if (rnd() < 0.002 && y > 0 && t[i - w] === 0) { this.put(i - w, M.SPARKLE, 3 + ri(4)); this.stamp[i - w] = this.clock; } // a flicker of radiation
+          if (rnd() < 0.003) { // too much packed together goes critical
+            let n = 0;
+            for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < w && yy < h && t[yy * w + xx] === M.PLUTONIUM) n++; }
+            if (n >= 36 && rnd() < 0.01) { this.nuke(x, y); break; }
+            if (n >= 30 && y > 0 && t[i - w] === 0 && rnd() < 0.3) { this.put(i - w, M.SPARKLE, 4 + ri(6)); this.stamp[i - w] = this.clock; } // getting dangerous: it fizzes
+          }
+          if (rnd() < 0.00002) this.put(i, M.STONE); // very slowly decays
+          break;
+        }
+        case M.BLACKHOLE: case M.VACUUM: {
+          // Swallow what touches it. A black hole eats anything (solids slowly); a vacuum only loose things.
+          const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
+          const j = yy * w + xx, b = t[j];
+          if (!b || PROOF[b] || b === m) break;
+          const soft = KIND[b] !== K.solid && KIND[b] !== K.stamp;
+          if (m === M.VACUUM) { if (soft && b !== M.WHITEHOLE && rnd() < 0.8) { t[j] = 0; this.skin[j] = 0; } break; }
+          if (soft || rnd() < 0.02) this.swallow(j);
+          break;
+        }
+        case M.PORTALIN: {
+          if (!this.portOut || !this.portOut.length) break;
+          for (let k = 0; k < 2; k++) {
+            const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            const j = yy * w + xx, b = t[j], kb = KIND[b];
+            if (b && (kb === K.powder || kb === K.liquid || kb === K.gas || kb === K.fire || kb === K.float || kb === K.skypowder || kb === K.spark)) this.teleport(j);
+          }
+          break;
+        }
+        case M.GRAVBOMB:
+          if (!this.fuel[i]) { // sticks to the first thing it touches
+            let hit = y >= h - 1;
+            for (let k = 0; k < 4 && !hit; k++) {
+              const xx = x + [0, 0, -1, 1][k], yy = y + [1, -1, 0, 0][k];
+              if (xx < 0 || yy < 0 || xx >= w || yy >= h) { hit = true; break; }
+              const b = t[yy * w + xx], kb = KIND[b];
+              if (b && kb !== K.gas && kb !== K.fire && kb !== K.spark && kb !== K.cloud && !(b === M.GRAVBOMB && !this.fuel[yy * w + xx])) hit = true;
+            }
+            if (hit) { this.fuel[i] = 1; life[i] = 40 + ri(16); }
+          } else if (life[i]-- <= 1) this.gravPush(x, y);
+          break;
         case M.LAVA:
           // Lava throws sparks of fire, and slowly cools to stone (sometimes metal).
           if (y > 0 && t[i - w] === 0 && rnd() < 0.006) { this.put(i - w, M.FIRE, 8 + ri(12)); this.stamp[i - w] = this.clock; }
@@ -2748,6 +3208,10 @@ svg .fill { fill: currentColor; stroke: none; }
        looks at the cells around it to decide what to do. */
     spawn(k, x, y, discover) {
       if (this.creatures.length >= MAX_CREATURES || x < 0 || y < 0 || x >= this.w || y >= this.h) return null;
+      if (k === M.STICKMAN) { // only ever one: placing him again moves him (and where he comes back)
+        this.creatures = this.creatures.filter((o) => o.k !== M.STICKMAN);
+        this.stickHome = { x, y };
+      }
       const c = { k, x, y, vx: 0, vy: 0, dir: rnd() < 0.5 ? -1 : 1, s: 0, t: 30 + ri(90), a: 0, f: ri(1000), p: ri(90) };
       this.creatures.push(c);
       if (discover !== false && !this.discovered[k]) { this.discovered[k] = 1; if (this.onDiscover) this.onDiscover(k); }
@@ -2786,6 +3250,8 @@ svg .fill { fill: currentColor; stroke: none; }
         if (c.y < 0) c.y = 0;
         const here = this.cellAt(c.x, c.y), A = ABIL[c.k];
         if (c.k === M.GHOST) { if (here === M.VOID) c.dead = 'void'; else this.ghost(c); continue; } // ghosts pass through everything
+        if (c.k === M.STICKMAN && c.s === 9) { this.player(c, here); continue; } // knocked out
+        if (here === M.LN2) { c.dead = 'freeze'; continue; }
         const proof = A && A.fireproof, zapper = A && A.zaps;
         // Fire, lava, acid and the like are deadly; so is being buried or frozen solid.
         // Creatures that zap are safe in their own lightning.
@@ -2821,15 +3287,27 @@ svg .fill { fill: currentColor; stroke: none; }
           case M.CATERPILLAR: this.caterpillar(c, here); break;
           case M.BUTTERFLY: this.bee(c, here); break;
           case M.EGG: this.egg(c); break;
+          case M.STICKMAN: this.player(c, here); break;
           default: if (MOVE[c.k]) this.custom(c, here, list);
         }
         if (A && !c.dead) this.abilities(c, A, here);
+        // Creatures that wander into a Portal In come out of a Portal Out.
+        if (this.portOut && this.portOut.length && !c.dead) {
+          if (c.pcd > 0) c.pcd--;
+          else {
+            const tall = c.k === M.STICKMAN ? 6 : 1;
+            let hit = this.cellAt(c.x, c.y + 1) === M.PORTALIN;
+            for (let up = 0; up <= tall && !hit; up += 3) hit = this.cellAt(c.x + 1, c.y - up) === M.PORTALIN || this.cellAt(c.x - 1, c.y - up) === M.PORTALIN;
+            if (hit) { const q = this.exitCell(); if (q >= 0) { c.x = q % this.w; c.y = (q / this.w) | 0; c.pcd = 25; c.fallFrom = c.y; } }
+          }
+        }
       }
       // Clear out the dead, leaving a puff of smoke where something burned.
       if (list.some((c) => c.dead)) {
         const booms = [];
         this.creatures = list.filter((c) => {
           if (!c.dead) return true;
+          if (c.k === M.STICKMAN) { this.knockOut(c, c.dead); c.dead = undefined; return true; } // he always comes back
           // Explosive creatures go off when they burn, get blown up, or their fuse runs out.
           if (ABIL[c.k] && ABIL[c.k].explodes && (c.dead === 'burn' || c.dead === 'boom')) { booms.push(Math.round(c.x), Math.round(c.y) - 1); return false; }
           if (c.dead === 'burn') { const x = Math.round(c.x), y = Math.round(c.y) - 1; if (x >= 0 && y >= 0 && x < this.w && y < this.h && this.t[y * this.w + x] === 0) this.put(y * this.w + x, M.SMOKE); }
@@ -2844,6 +3322,7 @@ svg .fill { fill: currentColor; stroke: none; }
     // Where each creature can be at all (anything else and it is buried).
     canBe(k, m) {
       if (m === 0 || OPEN[m]) return true;
+      if (k === M.STICKMAN && KIND[m] === K.liquid) return true; // he wades through any liquid (the nasty ones still hurt)
       if (WATERY[m]) return true; // flyers drown in it, but it isn't solid
       if ((k === M.WORM || MOVE[k] === 'burrow') && SOIL[m]) return true;
       if (FIERY[m] && ABIL[k] && ABIL[k].fireproof) return true;
@@ -3362,6 +3841,70 @@ svg .fill { fill: currentColor; stroke: none; }
       }
     }
     count(k) { let n = 0; for (const c of this.creatures) if (c.k === k) n++; return n; }
+
+    /* ---------------- The Stickman ----------------
+       The one creature you steer: this.keys = { left, right, jump } comes from the game (keyboard or the
+       on-screen buttons). He walks, steps up little bumps, jumps, swims, and a long fall knocks him out;
+       so do fire, lava, acid and blasts. After a moment he comes back where he was placed. */
+    player(c, here) {
+      const keys = this.keys || {}, w = this.w;
+      if (c.s === 9) { if (--c.ko <= 0) this.respawn(c); return; }
+      const free = (m) => m === 0 || OPEN[m] || KIND[m] === K.liquid;
+      const solidAt = (x, y) => !free(this.cellAt(x, y));
+      const wet = KIND[here] === K.liquid;
+      const ground = solidAt(c.x, c.y + 1);
+      if (c.fallFrom === undefined) c.fallFrom = c.y;
+      if (ground && !wet && c.vy >= 0) { // standing (or just landed)
+        if (c.air && c.y - c.fallFrom > 22 && c.landed) { c.y = Math.round(c.y); c.air = false; this.knockOut(c, 'fall'); return; }
+        c.y = Math.round(c.y); c.vy = 0; c.air = false; c.landed = true; // the first drop after you place him never hurts
+      }
+      if (ground || wet) c.fallFrom = c.y; else c.fallFrom = Math.min(c.fallFrom, c.y); // the highest point of a jump or fall
+      const want = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+      if (want) c.dir = want;
+      c.vx += (want * (wet ? 0.3 : 0.55) - c.vx) * (ground ? 0.35 : 0.12);
+      if (keys.jump && ground && !wet && c.vy >= 0) c.vy = -1.55;
+      else if (keys.jump && wet) c.vy = Math.max(c.vy - 0.12, -0.6);
+      if (wet) c.vy = Math.min(c.vy + 0.03, 0.5) * 0.92; else if (!(ground && c.vy === 0)) c.vy = Math.min(c.vy + 0.12, 2.6);
+      // Sideways: blocked by anything as tall as him, but steps up bumps of 1 or 2 cells.
+      const stepX = (dx) => {
+        const nx = c.x + dx; if (nx < 1 || nx > w - 2) return false;
+        const clear = (yy) => !solidAt(nx, yy) && !solidAt(nx, yy - 3) && !solidAt(nx, yy - 6);
+        if (clear(c.y)) { c.x = nx; return true; }
+        if (ground || wet) for (let up = 1; up <= 2; up++) if (clear(c.y - up)) { c.x = nx; c.y -= up; return true; }
+        return false;
+      };
+      for (let left = c.vx; Math.abs(left) > 0.001;) { const d = Math.abs(left) > 1 ? Math.sign(left) : left; if (!stepX(d)) { c.vx = 0; break; } left -= d; }
+      // Up and down.
+      if (c.vy === 0 && solidAt(c.x, c.y + 1)) { c.air = false; return; }
+      const n = Math.max(1, Math.ceil(Math.abs(c.vy))), dy = c.vy / n;
+      c.air = true;
+      for (let k = 0; k < n; k++) {
+        const ny = c.y + dy;
+        if (dy > 0 && Math.round(ny) !== Math.round(c.y) && solidAt(c.x, ny)) { // landed
+          c.y = Math.round(c.y); c.vy = 0; c.air = false;
+          if (!wet && c.y - c.fallFrom > 22 && c.landed) this.knockOut(c, 'fall');
+          c.landed = true;
+          return;
+        }
+        if (dy < 0 && solidAt(c.x, ny - 6)) { c.vy = 0; break; } // bumped his head
+        c.y = Math.max(0, ny);
+      }
+    }
+    knockOut(c, how) {
+      if (c.s === 9) return;
+      c.s = 9; c.ko = 70; c.vx = c.vy = 0;
+      if (how === 'burn' || how === 'boom') { const x = Math.round(c.x), y = Math.round(c.y) - 3; if (x >= 0 && y >= 0 && x < this.w && y < this.h && this.t[y * this.w + x] === 0) this.put(y * this.w + x, M.SMOKE); }
+      if (how === 'void') c.ko = 40;
+    }
+    respawn(c) {
+      const home = this.stickHome || { x: c.x, y: c.y }, w = this.w;
+      let x = Math.max(1, Math.min(w - 2, Math.round(home.x))), y = Math.max(7, Math.min(this.h - 1, Math.round(home.y)));
+      const free = (m) => m === 0 || OPEN[m];
+      for (let up = 0; up < 60 && y > 7; up++, y--) if (free(this.cellAt(x, y)) && free(this.cellAt(x, y - 3)) && free(this.cellAt(x, y - 6))) break;
+      while (y < this.h - 1 && free(this.cellAt(x, y + 1)) && !WATERY[this.cellAt(x, y + 1)]) y++; // stand on the ground below, so he doesn't fall again
+      c.x = x; c.y = y; c.vx = c.vy = 0; c.s = 0; c.fallFrom = y; c.dead = undefined;
+      this.sparkle(x, y - 3, 4);
+    }
     renderCreatures(px) {
       const w = this.w, h = this.h, fr = this.frame;
       for (const c of this.creatures) {
@@ -3383,6 +3926,7 @@ svg .fill { fill: currentColor; stroke: none; }
           case M.CATERPILLAR: frame = c.s === 5 ? S.cocoon[0] : S.walk[c.s === 1 ? 0 : (c.f >> 4) & 1]; break;
           case M.BUTTERFLY: frame = S.fly[(c.f >> 2) & 1]; break;
           case M.EGG: frame = S.sit[0]; break;
+          case M.STICKMAN: frame = c.s === 9 ? S.down[0] : c.air ? S.jump[0] : Math.abs(c.vx) > 0.05 ? S.walk[(c.f >> 2) & 1] : S.stand[0]; break;
           default: frame = S.walk[c.s === 1 ? 0 : (c.f >> (c.k === M.SNAIL ? 5 : 2)) & 1];
         }
         const cx = Math.round(c.x), cy = Math.round(c.y), rows = frame.length, cols = frame[0].length;
@@ -3590,6 +4134,18 @@ svg .fill { fill: currentColor; stroke: none; }
         else if (m === M.GHOSTFIRE) s = Math.max(0, 15 - Math.min(15, life[i] >> 2));
         else if (m === M.PLASMA || m === M.FIREWORK) s = (s + fr) & 15;
         else if (m === M.ROCKET) s = fr & 1 ? 0 : 6;
+        else if (m >= M.GRAVBOMB && m <= M.WHITEHOLE) { // third wave
+          const fu = this.fuel[i];
+          if (m === M.THERMITE && fu) { px[i] = C[M.FIRE * 16 + ((fr + i) & 3)]; continue; }            // white-hot
+          if (m === M.TNT && fu && (fr >> 2) & 1) { px[i] = C[M.FIRE * 16 + 2]; continue; }           // fuse blinking
+          if (m === M.GRAVBOMB) { if (fu) { s = (fr * 2 + (sh[i] >> 5)) & 31; if (s > 15) s = 31 - s; } }
+          else if (m === M.SPONGE) s = (sh[i] & 15) < 2 ? 15 : Math.min(14, (sh[i] >> 6) + life[i] * 2);  // pores, and darker when wet
+          else if (m === M.VIRUS || m === M.WHITEHOLE) s = (s + (fr >> 2)) & 15;
+          else if (m === M.ANTIMATTER) s = (fr + i * 7) & 15;
+          else if (m === M.PORTALIN || m === M.PORTALOUT) { s = (((i / this.w) | 0) * 2 + (fr >> 1)) & 31; if (s > 15) s = 31 - s; }
+          else if (m === M.BLACKHOLE) { if (((sh[i] + fr) & 31) < 2) s = 15; }
+          else if (m === M.PLUTONIUM) { s = ((sh[i] >> 4) + (fr >> 3)) & 31; if (s > 15) s = 31 - s; }
+        }
         else if (m === M.WALL) { const x = i % this.w, y = (i / this.w) | 0, row = (y / 3) | 0; s = (y % 3 === 2 || (x + (row & 1) * 3) % 6 === 5) ? 15 : (sh[i] >> 6); } // bricks and mortar
         px[i] = this.hasTint && this.tint[i] ? C[this.tint[i] * 16 + (this.tint[i] === M.RAINBOW ? ((i % this.w) + ((i / this.w) | 0) + (fr >> 1)) & 15 : s)] : C[cm * 16 + s];
       }
@@ -3661,6 +4217,7 @@ svg .fill { fill: currentColor; stroke: none; }
       }
       this.discovered.set(other.discovered);
       const dy = oyThis - oyOther;
+      if (other.stickHome) this.stickHome = { x: other.stickHome.x, y: other.stickHome.y + dy };
       this.creatures = [];
       (other.creatures || []).forEach((c) => {
         const y = c.y + dy;
@@ -3686,7 +4243,7 @@ svg .fill { fill: currentColor; stroke: none; }
   const $ = (s) => document.querySelector(s);
 
   const SAVE_KEY = 'sandalchemy.save.v1';
-  const ERASE = 255, DROPPER = 254;
+  const ERASE = 65535, DROPPER = 65534; // tools (older saves used 255 and 254, before ids went past 255)
   const DROPPER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4.5l5 5M17 7l2.2-2.2a1.8 1.8 0 0 0-2.5-2.5L14.5 4.5M16 8.5l-8.6 8.6L4 20l2.9-3.4L15.5 8" /></svg>';
   const BRUSHES = [{ r: 1, label: 'S', dot: 6 }, { r: 3, label: 'M', dot: 11 }, { r: 6, label: 'L', dot: 17 }, { r: 10, label: 'XL', dot: 24 }];
   const ORDER = [M.SAND, M.WATER, M.FIRE, M.STONE, M.STEAM, M.SMOKE, M.GLASS, M.LAVA, M.OBSIDIAN, M.SALT, M.CLOUD,
@@ -3702,8 +4259,10 @@ svg .fill { fill: currentColor; stroke: none; }
     M.GLOWSTONE, M.GLUE, M.BOUNCY, M.IRON, M.MAGNET, M.COPPER, M.BATTERY, M.DRYICE, M.NITRO, M.CHOCOLATE, M.MELTCHOC, M.CORAL,
     M.SUGAR, M.CARAMEL, M.CANDY, M.COTTONCANDY, M.WAX, M.MELTWAX, M.PAPER, M.TAR, M.SOAP, M.STEEL, M.GLITTER, M.NEON, M.PEARL,
     M.OWL, M.BAT, M.TURTLE, M.MOUSE, M.OCTOPUS, M.PHOENIX, M.UNICORN, M.DUCK, M.WALL, M.WEB,
-    M.LIGHTHOUSE, M.PYRAMID, M.IGLOO, M.CANDLE, M.FOUNTAIN, M.GINGERBREAD];
-  const brewed = (m) => MATS[m].magic || MATS[m].crafted || MATS[m].creature || MATS[m].object || MATS[m].invented;
+    M.LIGHTHOUSE, M.PYRAMID, M.IGLOO, M.CANDLE, M.FOUNTAIN, M.GINGERBREAD,
+    M.HYDROGEN, M.OXYGEN, M.LN2, M.SPONGE, M.VIRUS, M.CURE, M.TNT, M.C4, M.THERMITE, M.PLUTONIUM, M.ANTIMATTER,
+    M.VACUUM, M.PORTALIN, M.PORTALOUT, M.BLACKHOLE, M.WHITEHOLE, M.GRAVBOMB, M.STICKMAN];
+  const brewed = (m) => MATS[m].magic || MATS[m].crafted || MATS[m].creature || MATS[m].object || MATS[m].invented || MATS[m].science || MATS[m].space;
   const isCreature = (m) => m > 0 && m < COUNT && !!MATS[m].creature;
   const isObject = (m) => m > 0 && m < COUNT && !!MATS[m].object;
   const baseOf = (m) => (m > 0 && m < COUNT && MATS[m].like) || m; // inventions that act like a built-in element
@@ -3715,6 +4274,8 @@ svg .fill { fill: currentColor; stroke: none; }
     { label: 'Elements', items: ORDER.filter((m) => !MATS[m].start && !brewed(m) && m !== M.CAULDRON).sort(byName) },
     { label: 'Crafted', items: ORDER.filter((m) => MATS[m].crafted).sort(byName) },
     { label: 'Magic', items: ORDER.filter((m) => MATS[m].magic).sort(byName) },
+    { label: 'Science', items: ORDER.filter((m) => MATS[m].science).sort(byName) },
+    { label: 'Space', items: ORDER.filter((m) => MATS[m].space).sort(byName) },
     { label: 'Creatures', items: ORDER.filter((m) => MATS[m].creature).sort(byName) },
     { label: 'Objects', items: ORDER.filter((m) => MATS[m].object).sort(byName) },
   ];
@@ -3734,10 +4295,11 @@ svg .fill { fill: currentColor; stroke: none; }
   let restoring = false; // set while a restored backup is waiting for the reload
   function buildSave() {
     const disc = []; for (let m = 1; m < COUNT; m++) if (world.discovered[m]) disc.push(m);
-    // The world is stored as three compact byte strings: material, age and memory
+    // The world is stored as compact strings: material, age and memory
     // (age keeps fires and growing trees going; memory is what a mirror copies).
-    return { v: 1, disc, unseen: [...unseen], hinted: [...hinted], tool, brush, inv: inventions,
-      world: { w: world.w, h: world.h, t: pack(world.exportT()), l: pack(world.life), f: pack(world.fuel), p: world.hasTint ? pack(world.tint) : undefined,
+    // Version 2 stores material, memory and paint as two bytes per cell (ids go past 255).
+    return { v: 2, disc, unseen: [...unseen], hinted: [...hinted], tool, brush, inv: inventions,
+      world: { w: world.w, h: world.h, t: pack16(world.exportT()), l: pack(world.life), f: pack16(world.fuel), p: world.hasTint ? pack16(world.tint) : undefined,
         c: world.creatures.map((c) => [c.k, Math.round(c.x), Math.round(c.y), c.dir, c.into || 0, c.s === 5 ? 5 : 0, Math.min(c.age || 0, 99999)]) } };
   }
   function writeSave() {
@@ -3753,15 +4315,21 @@ svg .fill { fill: currentColor; stroke: none; }
     const bin = atob(str);
     for (let i = 0; i < bin.length && i < into.length; i++) { const v = bin.charCodeAt(i); into[i] = v < max ? v : 0; }
   }
+  // Two bytes per cell (low byte first).
+  function pack16(arr) { const b = new Uint8Array(arr.length * 2); for (let i = 0; i < arr.length; i++) { b[2 * i] = arr[i] & 255; b[2 * i + 1] = arr[i] >> 8; } return pack(b); }
+  function unpack16(str, into, max) {
+    const bin = atob(str);
+    for (let i = 0, k = 0; k + 1 < bin.length && i < into.length; i++, k += 2) { const v = bin.charCodeAt(k) | (bin.charCodeAt(k + 1) << 8); into[i] = v < max ? v : 0; }
+  }
   function restoreWorld(saved) {
     if (!saved || !saved.world) return null;
     try {
       const sw = saved.world, w = sw.w | 0, h = sw.h | 0;
       if (w < 1 || h < 1 || w * h > 4e6) return null;
-      const old = new World(w, h);
-      unpack(sw.t, old.t, COUNT);
+      const old = new World(w, h), wide = saved.v >= 2, un = wide ? unpack16 : unpack;
+      un(sw.t, old.t, COUNT);
       for (let i = 0; i < old.t.length; i++) if (MATS[old.t[i]].reserved) old.t[i] = 0; // an invention that's gone
-      try { if (sw.l) { unpack(sw.l, old.life, 256); old.hadLife = true; } if (sw.f) unpack(sw.f, old.fuel, 256); if (sw.p) { unpack(sw.p, old.tint, COUNT); for (let i = 0; i < old.tint.length; i++) if (old.tint[i] && MATS[old.tint[i]].reserved) old.tint[i] = 0; old.hasTint = true; } } catch (e) { /* older saves: ages start fresh */ }
+      try { if (sw.l) { unpack(sw.l, old.life, 256); old.hadLife = true; } if (sw.f) un(sw.f, old.fuel, 65536); if (sw.p) { un(sw.p, old.tint, COUNT); for (let i = 0; i < old.tint.length; i++) if (old.tint[i] && MATS[old.tint[i]].reserved) old.tint[i] = 0; old.hasTint = true; } } catch (e) { /* older saves: ages start fresh */ }
       if (Array.isArray(sw.c)) sw.c.slice(0, window.SandSim.MAX_CREATURES).forEach((a) => {
         if (!Array.isArray(a) || !isCreature(a[0])) return;
         const c = old.spawn(a[0], +a[1] || 0, +a[2] || 0, false); if (!c) return;
@@ -3793,6 +4361,7 @@ svg .fill { fill: currentColor; stroke: none; }
       inventions.forEach((r) => { if (r && MATS[r.id] && !MATS[r.id].reserved) next.discovered[r.id] = 1; });
       if (saved) {
         unseen = new Set(saved.unseen || []); hinted = new Set(saved.hinted || []);
+        if (!(saved.v >= 2)) { if (saved.tool === 255) saved.tool = ERASE; else if (saved.tool === 254) saved.tool = DROPPER; } // older saves
         if (saved.tool === ERASE || saved.tool === DROPPER || (saved.tool && saved.tool !== M.CAULDRON && next.discovered[saved.tool])) tool = saved.tool;
         if (saved.brush != null && BRUSHES[saved.brush]) brush = saved.brush;
         if (old) $('#tip').classList.add('gone');
@@ -3962,6 +4531,7 @@ svg .fill { fill: currentColor; stroke: none; }
   /* ---------------- Discoveries ---------------- */
   const toastQueue = []; let toastBusy = false;
   function discovered(m) {
+    if (m === M.PORTALIN && world && !world.discovered[M.PORTALOUT]) { world.discovered[M.PORTALOUT] = 1; setTimeout(() => discovered(M.PORTALOUT), 0); } // portals come as a pair
     unseen.add(m);
     toastQueue.push(m);
     if (!toastBusy) nextToast();
@@ -3987,7 +4557,7 @@ svg .fill { fill: currentColor; stroke: none; }
   }
   function countFound() {
     let n = 0; ORDER.forEach((m) => { if (world.discovered[m]) n++; });
-    for (let m = window.SandMats.BUILTIN; m < COUNT; m++) if (MATS[m].invented && world.discovered[m]) n++; // AI inventions count too
+    for (let m = 1; m < COUNT; m++) if (MATS[m].invented && world.discovered[m]) n++; // AI inventions count too
     return n;
   }
   function renderCount() {
@@ -4121,8 +4691,8 @@ svg .fill { fill: currentColor; stroke: none; }
      built from the game's own building blocks. */
   const AI_DEFAULT_URL = 'https://super-mode-0dd5.christers20.workers.dev';                 // paste your Worker address here to switch the AI on for everyone
   const INV_KEY = 'sandalchemy.inventions.v1', AI_KEY = 'sandalchemy.ai.v1';
-  const { BUILTIN, EXTRA, invent } = window.SandMats;
-  const isBuiltin = (m) => m > 0 && (m < BUILTIN || (m >= EXTRA && m < COUNT));
+  const { invent, isSlot } = window.SandMats;
+  const isBuiltin = (m) => m > 0 && m < COUNT && !isSlot(m) && !MATS[m].spare;
   let inventions = [];                       // [{ id, a, b, spec }]
   let aiSettings = { on: true, url: '', mode: 'cloud', model: 'small' };
   try { const s = JSON.parse(localStorage.getItem(AI_KEY) || 'null'); if (s) aiSettings = Object.assign(aiSettings, s); } catch (e) { /* ignore */ }
@@ -4277,7 +4847,7 @@ svg .fill { fill: currentColor; stroke: none; }
     return out(gr);
   }
   // Turn the AI's answer into a safe material entry (or null if it doesn't make sense).
-  const NOT_LIKE = new Set([M.CAULDRON, M.SPARKLE, M.ROCKET, M.WALL]);
+  const NOT_LIKE = new Set([M.CAULDRON, M.SPARKLE, M.ROCKET, M.WALL, M.PORTALIN, M.PORTALOUT]);
   function likeOk(m) { return isBuiltin(m) && !MATS[m].creature && !MATS[m].object && !MATS[m].reserved && KIND[m] !== K.empty && !NOT_LIKE.has(m); }
   const LIKE_WORDS = [[/thunder ?storm|rain ?storm|storm ?cloud|thunder ?cloud|rain ?cloud/, M.STORM], [/lightning|thunder|\bbolt|\bzap/, M.LIGHTNING], [/plasma/, M.PLASMA],
     [/\blava|magma/, M.LAVA], [/firework/, M.FIREWORK], [/\b(fire|flames?|blaze|inferno)\b/, M.FIRE], [/\bembers?\b/, M.EMBER], [/\bacid/, M.ACID],
@@ -4559,7 +5129,7 @@ svg .fill { fill: currentColor; stroke: none; }
   // Recipes for 3 and 4 ingredients (only ever made by the AI), keyed by the sorted ids.
   const MULTI = new Map();
   const multiKey = (ids) => ids.slice().sort((x, y) => x - y).join('+');
-  function freeSlot() { for (let id = BUILTIN; id < COUNT; id++) if (MATS[id].reserved) return id; return 0; }
+  function freeSlot() { for (let id = 1; id < COUNT; id++) if (isSlot(id) && MATS[id].reserved) return id; return 0; }
   // Add an invention to the game (from the AI, or from storage / a backup).
   function registerInvention(rec) {
     const a = rec.a, b = rec.b;
@@ -4572,7 +5142,7 @@ svg .fill { fill: currentColor; stroke: none; }
       return same;
     }
     const entry = buildEntry(rec.spec, a, b, parts); if (!entry) return 0;
-    const id = rec.id >= BUILTIN && rec.id < COUNT && MATS[rec.id].reserved ? rec.id : freeSlot(); if (!id) return 0;
+    const id = isSlot(rec.id) && MATS[rec.id].reserved ? rec.id : freeSlot(); if (!id) return 0;
     if (entry.layEgg) entry.abil.lays = [id, 0.0005];
     invent(id, entry, parts ? 0 : a, parts ? 0 : b);
     if (parts) MULTI.set(multiKey(parts), id);
@@ -4625,7 +5195,7 @@ svg .fill { fill: currentColor; stroke: none; }
   function loadInventions(list) {
     if (!Array.isArray(list)) return;
     // Inventions made from other inventions need their ingredients first, so go round a few times.
-    let left = list.slice(0, EXTRA - BUILTIN);
+    let left = list.slice(0, COUNT);
     for (let pass = 0; pass < 8 && left.length; pass++) {
       const next = [];
       left.forEach((r) => {
@@ -5495,6 +6065,35 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     else { toolBefore = tool; pick(m); }
     scrollToTool(tool);
   }
+  /* ---------------- The Stickman's controls ----------------
+     Arrow keys (or A, D, W) and Space on a keyboard, or the on-screen buttons on a phone. While he's in
+     the world, Space jumps instead of pausing. */
+  const stickKeys = { left: false, right: false, jump: false };
+  const hasStick = () => !!world && world.creatures.some((c) => c.k === M.STICKMAN);
+  const STICK_KEYS = { arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right', arrowup: 'jump', w: 'jump', ' ': 'jump' };
+  addEventListener('keydown', (e) => {
+    const k = STICK_KEYS[e.key.toLowerCase()]; if (!k) return;
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!hasStick() || PANELS.some((sel) => !$(sel).hidden)) return;
+    stickKeys[k] = true; e.preventDefault(); e.stopImmediatePropagation();
+  });
+  addEventListener('keyup', (e) => { const k = STICK_KEYS[e.key.toLowerCase()]; if (k) stickKeys[k] = false; });
+  addEventListener('blur', () => { stickKeys.left = stickKeys.right = stickKeys.jump = false; });
+  document.querySelectorAll('#stick-pad .sp-btn').forEach((b) => {
+    const k = b.dataset.k;
+    const on = (e) => { e.preventDefault(); stickKeys[k] = true; b.classList.add('on'); try { b.setPointerCapture(e.pointerId); } catch (err) { /* fine */ } };
+    const off = () => { stickKeys[k] = false; b.classList.remove('on'); };
+    b.addEventListener('pointerdown', on);
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => b.addEventListener(ev, off));
+    b.addEventListener('contextmenu', (e) => e.preventDefault());
+  });
+  let padShown = false;
+  function updateStickPad() {
+    const show = hasStick();
+    if (show !== padShown) { padShown = show; $('#stick-pad').hidden = !show; if (!show) { stickKeys.left = stickKeys.right = stickKeys.jump = false; } }
+    world.keys = stickKeys;
+  }
+
   addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (line) { endLine(false); return; }
@@ -5571,10 +6170,23 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       world.placeStamp(tool, cx, cy);
       return;
     }
+    if (tool === M.PORTALIN || tool === M.PORTALOUT) {
+      // A portal is a bar 2 cells wide; the brush sets how tall it is (6 for the medium brush).
+      const ph = Math.max(2, r * 2);
+      if ((cx - petX) ** 2 + (cy - petY) ** 2 < ph * ph / 2) return;
+      petX = cx; petY = cy;
+      for (let dy = 0; dy < ph; dy++) for (let dx = 0; dx < 2; dx++) {
+        const x = cx + dx, y = cy - (ph >> 1) + dy; if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const i = y * w + x, kb = KIND[t[i]];
+        if (t[i] === 0 || kb === K.gas || kb === K.fire || kb === K.cloud || kb === K.spark || kb === K.liquid || kb === K.powder) world.put(i, tool);
+      }
+      return;
+    }
     if (isCreature(tool)) {
       // Creatures are placed a few at a time, spaced out along the stroke.
       if ((cx - petX) ** 2 + (cy - petY) ** 2 < 25) return;
       petX = cx; petY = cy;
+      if (tool === M.STICKMAN) { world.spawn(tool, cx, cy, false); return; } // just the one
       const n = [1, 1, 2, 3][brush];
       for (let k = 0; k < n; k++) world.spawn(tool, cx + (k ? ri(r * 2 + 1) - r : 0), cy + (k ? ri(r * 2 + 1) - r : 0), false);
       return;
@@ -5614,6 +6226,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       const k = KIND[tool];
       if (k === K.powder || k === K.liquid || k === K.gas || k === K.fire || k === K.cloud || k === K.float || k === K.skypowder || baseOf(tool) === M.LIGHTNING) dab(curX, curY);
     }
+    if ((world.frame & 7) === 0 || padShown) updateStickPad();
     if (!paused) world.step();
     world.render(px);
     ctx.putImageData(image, 0, 0);
