@@ -359,6 +359,7 @@ svg .fill { fill: currentColor; stroke: none; }
 .primary-btn.danger { background: #e5484d; border-color: #e5484d; color: #fff; }
 .game-ver { color: var(--muted); font-size: 0.78rem; text-align: center; margin: 10px 0 0; }
 .ai-log { max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 0.7rem; line-height: 1.35; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px; margin: 8px 0; color: var(--muted); user-select: text; -webkit-user-select: text; }
+.settings-first { margin-top: 4px; border-top: 0; padding-top: 0; }
 
 </style>
 </head>
@@ -379,6 +380,9 @@ svg .fill { fill: currentColor; stroke: none; }
     </button>
     <button class="icon-btn" id="btn-clear" type="button" aria-label="Clear the world (hold to remove one element)" title="Clear the world · hold to remove one element">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
+    </button>
+    <button class="icon-btn" id="btn-settings" type="button" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
     </button>
   </header>
 
@@ -417,11 +421,21 @@ svg .fill { fill: currentColor; stroke: none; }
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
       </button>
     </header>
-    <p class="sheet-lede">Make things happen in your world to discover new materials. Tap a <b>?</b> for a hint. <button class="tip-link" id="to-backup" type="button">Backup &amp; restore</button></p>
+    <p class="sheet-lede">Make things happen in your world to discover new materials. Tap a <b>?</b> for a hint. <button class="tip-link" id="to-backup" type="button">Backup &amp; settings</button></p>
     <div class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></svg><input type="search" id="book-search" placeholder="Search your discoveries" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Search your discoveries"><button class="search-x" type="button" aria-label="Clear search" hidden>&times;</button></div>
     <div class="book-grid" id="book-grid"></div>
     <p class="no-match" hidden>No discovered elements match that.</p>
-    <section class="ai-box" id="ai-box">
+  </div>
+</div>
+<div class="overlay" id="settings" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <header class="sheet-head">
+      <h2 id="settings-title">Settings</h2>
+      <button class="icon-btn" id="settings-close" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+    </header>
+    <section class="ai-box settings-first" id="ai-box">
       <h3>&#10024; Cauldron spirit (AI)</h3>
       <p class="sheet-lede">When two things have no recipe, the Cauldron spirit can invent something brand new: an element, a creature or an object. Inventions are saved, and you can mix them again.</p>
       <label class="switch"><input type="checkbox" id="ai-on"><span>Invent new things with AI</span></label>
@@ -448,7 +462,7 @@ svg .fill { fill: currentColor; stroke: none; }
         <div class="row ai-url-row"><input type="url" id="ai-url" autocomplete="off" spellcheck="false" aria-label="Worker address"><button class="ghost-btn" id="ai-test" type="button">Test</button></div>
       </details>
     </section>
-    <p class="game-ver" id="game-ver">Game version: Oct 10, update 10</p>
+    <p class="game-ver" id="game-ver">Game version: Oct 10, update 12</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -1018,7 +1032,7 @@ svg .fill { fill: currentColor; stroke: none; }
     colors: ['#eef6ff', '#c4d4e6'], hint: 'Ice and smoke.', recipe: 'Ice + Smoke', desc: 'Slowly turns into fog. Freezes water.',
     props: { evaporates: [M.FOG, 0.004] } });
   C(M.NITRO, { key: 'nitro', name: 'Nitro', kind: 'liquid', density: 1.1, spread: 3, flam: 1, burn: 1,
-    colors: ['#d8ff6a', '#9ac43a'], alpha: 230, hint: 'Oil and gunpowder. Handle with care!', recipe: 'Oil + Gunpowder', desc: 'Explodes if it drops from a height or touches fire.',
+    colors: ['#d8ff6a', '#9ac43a'], alpha: 230, hint: 'Oil and gunpowder. Handle with care!', recipe: 'Oil + Gunpowder', desc: 'Flows like any liquid, but explodes the moment fire, a spark or a blast touches it.',
     props: { volatile: true } });
   C(M.CHOCOLATE, { key: 'chocolate', name: 'Chocolate', kind: 'solid', density: 6,
     colors: ['#7a4a2a', '#4a2a16'], hint: 'Mud and honey (tastier than it sounds).', recipe: 'Mud + Honey', desc: 'Melts near heat.',
@@ -1987,13 +2001,7 @@ svg .fill { fill: currentColor; stroke: none; }
       const w = this.w;
       if (STICKY[m] && this.clings(i, x, y, m)) return;
       if (this.hasSticky && !STICKY[m] && this.stuck(i, x, y)) return;
-      if (VOLATILE[m]) {
-        // Nitro: falling builds up a jolt; landing hard sets it off.
-        const below = i + w;
-        if (y < this.h - 1 && this.yields(m, below)) { this.swap(i, below); this.fuel[below] = Math.min(40, this.fuel[below] + 1); return; }
-        if (this.fuel[i] >= 12) { this.t[i] = 0; this.fuel[i] = 0; this.blast(x, y); return; }
-        this.fuel[i] = 0;
-      }
+      // (Nitro no longer goes off from a fall: only fire, sparks and blasts set it off.)
       if (y < this.h - 1) {
         const below = i + w;
         if (this.yields(m, below)) { this.swap(i, below); return; }
@@ -3814,9 +3822,11 @@ svg .fill { fill: currentColor; stroke: none; }
       g.append(c);
     });
     resetSearch($('#book-search')); runBookSearch('');
-    renderAIBox();
     $('#book').hidden = false;
   }
+  function openSettings() { renderAIBox(); $('#settings').hidden = false; }
+  $('#btn-settings').addEventListener('click', openSettings);
+  $('#settings-close').addEventListener('click', () => { $('#settings').hidden = true; });
   $('#btn-book').addEventListener('click', openBook);
   $('#book-close').addEventListener('click', () => { $('#book').hidden = true; });
   document.querySelectorAll('.overlay').forEach((o) => o.addEventListener('click', (e) => { if (e.target === o) o.hidden = true; }));
@@ -4832,7 +4842,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. spr
     brew(true);
     if (!id) {
       const why = got.error === 'limit' ? 'The Cauldron spirit is resting for today (daily limit reached). It wakes up again at ' + new Date(new Date().setUTCHours(24, 0, 0, 0)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.' : got.error === 'gpucrash' ? 'Your phone\u2019s graphics chip crashed while the AI was thinking, so the on-device AI may not work on this phone. Online works on every device.'
-        : got.error === 'gpu' ? (/compatible GPU/i.test(got.why || '') ? 'The browser has switched off the graphics chip after a crash. Close the browser completely (swipe it away) and open the game again.' : 'Couldn\u2019t start the AI on this device' + (got.why ? ' (' + String(got.why).slice(0, 140) + ')' : '') + '. The Debug log in the book has the details.')
+        : got.error === 'gpu' ? (/compatible GPU/i.test(got.why || '') ? 'The browser has switched off the graphics chip after a crash. Close the browser completely (swipe it away) and open the game again.' : 'Couldn\u2019t start the AI on this device' + (got.why ? ' (' + String(got.why).slice(0, 140) + ')' : '') + '. The Debug log in Settings has the details.')
         : got.error === 'offline' ? 'Couldn\u2019t reach the Cauldron spirit (offline?).' : got.error === 'oldworker' ? 'Your Worker needs updating to invent 3 or 4 ingredient brews.' : 'The Cauldron spirit couldn\u2019t think of anything this time' + (got.why ? ' (' + got.why + ')' : '') + '.';
       const n = document.createElement('p'); n.className = 'ai-note'; n.textContent = why + ' Here\u2019s a normal mix instead.';
       $('#brew-result').append(n);
@@ -4904,7 +4914,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. spr
     n.textContent = msg; n.classList.add('on');
     clearTimeout(note.t); note.t = setTimeout(() => n.classList.remove('on'), 3600);
   }
-  $('#to-backup').addEventListener('click', () => $('#backup').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  $('#to-backup').addEventListener('click', () => { $('#book').hidden = true; openSettings(); });
   $('#backup-copy').addEventListener('click', async () => {
     const box = $('#backup-code');
     let code; try { code = await Backup.encode(); } catch (e) { note('Could not make a backup on this device.'); return; }
@@ -5091,7 +5101,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. spr
   }
   /* Keyboard shortcuts:  C eraser · E dropper · B brew · F search · Space pause
      · Ctrl/Cmd+Z undo · Esc closes a panel (or cancels a line). */
-  const PANELS = ['#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
+  const PANELS = ['#settings', '#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
   let toolBefore = M.SAND;
   function toggleTool(m) {
     if (tool === m) pick(toolBefore !== m ? toolBefore : M.SAND);
