@@ -462,7 +462,7 @@ svg .fill { fill: currentColor; stroke: none; }
         <div class="row ai-url-row"><input type="url" id="ai-url" autocomplete="off" spellcheck="false" aria-label="Worker address"><button class="ghost-btn" id="ai-test" type="button">Test</button></div>
       </details>
     </section>
-    <p class="game-ver" id="game-ver">Game version: Oct 10, update 14</p>
+    <p class="game-ver" id="game-ver">Game version: Oct 10, update 18</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -654,10 +654,11 @@ svg .fill { fill: currentColor; stroke: none; }
     OWL: 240, BAT: 241, TURTLE: 242, MOUSE: 243, OCTOPUS: 244, PHOENIX: 245, UNICORN: 246, DUCK: 247,
     LIGHTHOUSE: 248, PYRAMID: 249, IGLOO: 250, CANDLE: 251, FOUNTAIN: 252, GINGERBREAD: 253,
     WALL: 226, // took the last invention slot (saved inventions move to a free one)
+    WEB: 225,
   };
   // Ids from BUILTIN up to EXTRA-1 are kept free for things the AI invents
   // (254 and 255 are the Dropper and Eraser tools in the game).
-  const BUILTIN = 109, EXTRA = 226, COUNT = 254;
+  const BUILTIN = 109, EXTRA = 225, COUNT = 254;
 
   /* kind: how it moves.  density: heavier things sink through lighter
      liquids.  slip: how readily a powder slides off a pile (0..1).
@@ -1089,6 +1090,10 @@ svg .fill { fill: currentColor; stroke: none; }
   def(M.WALL, { key: 'wall', name: 'Wall', kind: 'solid', density: 99, start: true, wall: true,
     colors: ['#7a7f9e', '#4a4e68'], hint: 'Always in your toolbox.', recipe: 'Always available',
     desc: 'Unbreakable. Blasts, acid, lava and the void can\u2019t touch it. Only the eraser or the clear button removes it.' });
+
+  // Webs: spun by web-making creatures and inventions. Light and sticky, and they burn in a flash.
+  def(M.WEB, { key: 'web', name: 'Web', kind: 'solid', density: 0.5, flam: 0.7, burn: 6, alpha: 190,
+    colors: ['#f4f0ff', '#bfb6dc'], hint: 'Some creatures spin these.', recipe: 'Spun by web makers', desc: 'Thin sticky threads. Burns in a flash.' });
 
   // New creatures. These use the same movements and abilities as invented ones.
   creature(M.OWL, { key: 'owl', name: 'Owl', colors: ['#a07850', '#f0e0c0'], move: 'fly',
@@ -1587,6 +1592,7 @@ svg .fill { fill: currentColor; stroke: none; }
     if (IGNITERS.has(id)) { FIERY[id] = 1; HOT[id] = 1; }
     if (m.props && m.props.hot) DEADLY[id] = 1;
     buildProps(m); buildSprite(m);
+    if (m.skinGlow) GLOWS[id] = m.skinGlow; // an invention that acts like something else can still glow
     ABIL[id] = m.abil; MOVE[id] = m.move; FX[id] = m.fx;
     COLORVER++;
   }
@@ -1606,6 +1612,8 @@ svg .fill { fill: currentColor; stroke: none; }
       this.vx = new Float32Array(n); this.vy = new Float32Array(n); // bouncy-ball velocity
       this.fx = new Float32Array(n); this.fy = new Float32Array(n); // and sub-cell position
       this.skin = new Uint8Array(n);    // which invention a cell really is (see LIKE)
+      this.tint = new Uint8Array(n);    // painted cells: whose colours they show (they still act like themselves)
+      this.hasTint = false;
       this.hasSkins = false; this.curBase = 0; this.curSkin = 0;
       this.clock = 1;
       this.frame = 0;
@@ -1634,6 +1642,7 @@ svg .fill { fill: currentColor; stroke: none; }
       if (LIKE[m]) { sk = m; m = LIKE[m]; this.hasSkins = true; if (!this.discovered[sk]) { this.discovered[sk] = 1; if (this.onDiscover) this.onDiscover(sk); } }
       else if (this.curSkin && m === this.curBase) { sk = this.curSkin; this.hasSkins = true; }
       this.skin[i] = sk;
+      if (this.hasTint) this.tint[i] = 0;
       this.t[i] = m;
       this.life[i] = life != null ? life : this.defaultLife(m);
       this.fuel[i] = 0;
@@ -1673,6 +1682,7 @@ svg .fill { fill: currentColor; stroke: none; }
       v = l[i]; l[i] = l[j]; l[j] = v;
       v = s[i]; s[i] = s[j]; s[j] = v;
       v = f[i]; f[i] = f[j]; f[j] = v;
+      if (this.hasTint) { const p = this.tint; v = p[i]; p[i] = p[j]; p[j] = v; }
       if (this.hasBouncy && (BOUNCE[t[i]] || BOUNCE[t[j]])) {
         const X = this.vx, Y = this.vy, P = this.fx, Q = this.fy;
         v = X[i]; X[i] = X[j]; X[j] = v; v = Y[i]; Y[i] = Y[j]; Y[j] = v;
@@ -1874,7 +1884,108 @@ svg .fill { fill: currentColor; stroke: none; }
         }
       }
       if (F.rain && rnd() < 0.008) { const j = i + w; if (y < h - 1 && t[j] === 0) this.put(j, M.WATER); }
+      // How many of material m are around cell j (keeps webs, slime and spreading thin instead of solid blobs).
+      const around = (j, m) => { let n = 0; const jx = j % w, jy = (j / w) | 0; for (let d = 0; d < 8; d++) { const xx = jx + NX[d], yy = jy + NY[d]; if (xx >= 0 && yy >= 0 && xx < w && yy < h && t[yy * w + xx] === m) n++; } return n; };
+      const solidBelow = (j) => j + w < t.length && t[j + w] !== 0 && KIND[t[j + w]] !== K.gas;
+      // A head count of every material, refreshed now and then, so spreading and trails stop at a sensible size.
+      if ((F.grow || F.bloom || F.web || F.slime || F.plants || F.crystal || F.bubbles) && (!this.matCount || this.frame - this.countedAt > 30)) {
+        const mc = this.matCount || (this.matCount = new Uint32Array(COUNT)); mc.fill(0);
+        for (let k = 0; k < t.length; k++) mc[t[k]]++;
+        this.countedAt = this.frame;
+      }
+      const room = (m, cap) => this.matCount[m] < cap;
+      if (F.grow && rnd() < 0.004 && this.fuel[i] < 14 && t[i] && room(t[i], 350)) {
+        // Spreads a little at a time, along surfaces, and only so far from where it started.
+        const j = near();
+        if (j >= 0 && (t[j] === 0 || KIND[t[j]] === K.gas) && around(j, t[i]) <= 3 && (solidBelow(j) || around(j, t[i]) >= 1)) {
+          const gen = this.fuel[i] + 1; this.put(j, id); this.fuel[j] = gen; this.stamp[j] = this.clock;
+        }
+      }
+      if (F.plants && rnd() < 0.006 && room(M.PLANT, 400)) {
+        // Plant life sprouts from soil it touches, or right on top of it.
+        const SOIL = [M.DIRT, M.SAND, M.MUD, M.CLAY, M.MOSS];
+        let j = near(), spot = -1;
+        if (j >= 0 && SOIL.includes(t[j]) && j >= w && t[j - w] === 0) spot = j - w;
+        else if (y > 0 && t[i - w] === 0) spot = i - w;
+        if (spot >= 0 && around(spot, M.PLANT) <= 3) this.put(spot, M.PLANT);
+      }
+      if (F.bloom && rnd() < 0.004 && room(M.FLOWER, 300)) { const j = near(); if (j >= 0 && t[j] === 0 && solidBelow(j) && around(j, M.FLOWER) < 2) this.put(j, M.FLOWER); }
+      if (F.web && rnd() < 0.012 && room(M.WEB, 300)) { const j = near(); if (j >= 0 && t[j] === 0 && around(j, M.WEB) <= 2) this.put(j, M.WEB); }
+      if (F.slime && rnd() < 0.004 && room(M.SLIME, 300)) { const j = near(); if (j >= 0 && t[j] === 0 && around(j, M.SLIME) <= 2) this.put(j, M.SLIME); }
+      // ---- movement: pull, push, levitate, shake (they act on loose things within a few cells) ----
+      const loose = (m) => { const k = KIND[m]; return m && (k === K.powder || k === K.liquid || k === K.skypowder) && !BOUNCE[m]; };
+      const openAt = (j) => t[j] === 0 || KIND[t[j]] === K.gas;
+      const pick = (r) => { const xx = x + ri(2 * r + 1) - r, yy = y + ri(2 * r + 1) - r; return xx < 0 || yy < 0 || xx >= w || yy >= h || (xx === x && yy === y) ? -1 : yy * w + xx; };
+      const nudge = (j, sx, sy) => { // move cell j one step towards (sx, sy) if there's room
+        const jx = j % w, jy = (j / w) | 0, nx = jx + sx, ny = jy + sy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) return;
+        const k = ny * w + nx; if (openAt(k)) { this.swap(j, k); this.stamp[k] = this.clock; }
+      };
+      // Pull, push and levitate work through the air: low pressure sucks air (and loose grains) in,
+      // high pressure blows it out, and an updraft lifts things. The wind does the moving, like a real storm.
+      if (F.levitate && rnd() < 0.3) this.airForce(x, y, 0, true);
+      if ((F.pull || F.push) && rnd() < 0.5) {
+        // Toss loose grains it can reach towards it (pull) or outwards and up (push).
+        for (let tries = 0; tries < 3; tries++) {
+          const j = pick(10);
+          if (j < 0 || !loose(t[j]) || t[j] === t[i] || this.flying.length > 4000) continue;
+          const jx = j % w, jy = (j / w) | 0;
+          if (!((jy > 0 && openAt(j - w)) || (jx > 0 && openAt(j - 1)) || (jx < w - 1 && openAt(j + 1)))) continue; // only what the force can reach
+          const dx = x - jx, dy = y - jy, d = Math.hypot(dx, dy) || 1;
+          let vx, vy;
+          if (F.pull) { const sp = Math.min(2.8, 0.6 + d * 0.28); vx = dx / d * sp; vy = dy / d * sp - 0.8; }
+          else { const sp = 1.6 + rnd() * 1.2; vx = (-dx / d || (rnd() < 0.5 ? -1 : 1)) * sp * 1.3; vy = -0.9 - rnd() * 0.9 - Math.max(0, dy / d) * sp; }
+          this.flying.push({ m: t[j], sk: this.hasSkins ? this.skin[j] : 0, l: this.life[j], s: this.shade[j], x: jx, y: jy, vx, vy, wt: 1 });
+          t[j] = 0; this.skin[j] = 0; this.life[j] = 0;
+        }
+        if (rnd() < 0.04) for (const c of this.creatures) { // creatures are drawn in or shoved away too
+          const dx = c.x - x, dy = c.y - y, d2 = dx * dx + dy * dy; if (d2 > 196 || d2 < 2 || c.dead) continue;
+          const d = Math.sqrt(d2), s = F.pull ? -0.8 : 0.8, nx = c.x + dx / d * s, ny = c.y + dy / d * s;
+          if (this.canBe(c.k, this.cellAt(nx, ny))) { c.x = Math.max(1, Math.min(w - 2, nx)); c.y = Math.max(0, Math.min(h - 1, ny)); }
+        }
+      }
+      if (F.shake && rnd() < 0.4) {
+        const j = pick(7);
+        if (j >= 0 && t[j]) {
+          if (loose(t[j])) nudge(j, ri(3) - 1, ri(2)); // jiggle: piles slump
+          else if ((t[j] === M.STONE || t[j] === M.SANDSTONE || t[j] === M.BRICK) && rnd() < 0.01) this.put(j, M.SAND); // and crumble
+        }
+      }
+      // ---- transformations ----
+      if (F.petrify && rnd() < 0.06) { const j = near(); if (j >= 0) { const b = t[j]; if (b === M.SAND || b === M.MUD || b === M.DIRT || b === M.CLAY || b === M.WATER || b === M.SEAWATER) this.put(j, M.STONE); else if (b === M.LAVA) this.put(j, M.OBSIDIAN); } }
+      if (F.crystal && rnd() < 0.005) { const j = near(); if (j >= 0 && t[j] === 0 && around(j, 0) < 8 && room(M.CRYSTAL, 300)) this.put(j, M.CRYSTAL); }
+      if (F.rust && rnd() < 0.03) { const j = near(); if (j >= 0 && (t[j] === M.METAL || t[j] === M.IRON)) this.put(j, M.RUST); }
+      // ---- water and heat ----
+      if (F.heat && rnd() < 0.12) { const j = near(); if (j >= 0) { const b = t[j]; if (b === M.WATER || b === M.SEAWATER) this.put(j, M.STEAM); else if (b === M.MUD) this.put(j, M.DIRT); else if (b === M.ICE || b === M.SNOW) this.put(j, M.WATER); } }
+      if (F.sponge && rnd() < 0.25) { const j = pick(3); if (j >= 0 && (t[j] === M.WATER || t[j] === M.SEAWATER || t[j] === M.SWAMP)) { t[j] = 0; this.skin[j] = 0; } }
+      if (F.purify && rnd() < 0.05) { const j = near(); if (j >= 0 && (t[j] === M.ACID || t[j] === M.SWAMP || t[j] === M.SLIME)) this.put(j, M.WATER); }
+      if (F.bubbles && rnd() < 0.012 && room(M.BUBBLE, 200)) { const j = near(); if (j >= 0 && (t[j] === 0 || t[j] === M.WATER || t[j] === M.SEAWATER)) this.put(j, M.BUBBLE); }
+      // ---- magic and life ----
+      if (F.sparkles && rnd() < 0.02) { const j = pick(2); if (j >= 0 && t[j] === 0) { this.put(j, M.SPARKLE, 6 + ri(10)); this.stamp[j] = this.clock; } }
+      if (F.life && rnd() < 0.0008 && this.creatures.length < 40) {
+        const j = pick(4); if (j >= 0 && t[j] === 0) { const kinds = [M.FIREFLY, M.BEE, M.BUTTERFLY]; this.spawn(kinds[ri(3)], j % w, (j / w) | 0); }
+      }
+      if (F.rainbow && rnd() < 0.08) { const j = near(); if (j >= 0 && t[j] && t[j] !== t[i] && KIND[t[j]] !== K.gas && KIND[t[j]] !== K.fire) { this.tint[j] = M.RAINBOW; this.hasTint = true; } }
+      if (F.teleport && rnd() < 0.003 && t[i]) { // blink to a free spot nearby
+        for (let tries = 0; tries < 6; tries++) { const j = pick(12); if (j >= 0 && t[j] === 0) { this.swap(i, j); this.stamp[j] = this.clock; for (let k = 0; k < 3; k++) { const q = pick(2); if (q >= 0 && t[q] === 0) this.put(q, M.SPARKLE, 5 + ri(6)); } return true; } }
+      }
+      if (F.paint && rnd() < 0.08) { const j = near(); if (j >= 0 && t[j] && t[j] !== t[i] && KIND[t[j]] !== K.gas && KIND[t[j]] !== K.fire) { this.tint[j] = id; this.hasTint = true; } }
       return false;
+    }
+    /* Pressure pushed into (or pulled out of) the air around a cell; levitation adds an updraft. */
+    airForce(x, y, sign, lift) {
+      if (!this.au) this.initAir();
+      if (!this.airOn) { this.airSolids(); this.airOn = true; }
+      const A = this.A, aw = this.aw, ah = this.ah, ax0 = Math.min(aw - 1, (x / A) | 0), ay0 = Math.min(ah - 1, (y / A) | 0);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const ax = ax0 + dx, ay = ay0 + dy; if (ax < 0 || ay < 0 || ax >= aw || ay >= ah) continue;
+        const ai = ay * aw + ax; if (this.asolid[ai]) continue;
+        if (sign) { const p = this.ap[ai] + sign * 0.12; this.ap[ai] = Math.max(-5, Math.min(5, p)); }
+        if (lift && this.av[ai] > -2.2) this.av[ai] -= 0.06;
+      }
+      if (lift) { // the updraft reaches down to the ground below, so it lifts what's lying there
+        for (let dy = 1; dy < 12 && ay0 + dy < ah; dy++) { const ai = (ay0 + dy) * aw + ax0; if (this.asolid[ai]) { const gi = ai - aw; if (this.av[gi] > -2.2) this.av[gi] -= 0.05; break; } }
+      }
     }
     /* A storm blows the air about: gusts swing back and forth with a little lift. */
     gust(x, y, id) {
@@ -1922,7 +2033,7 @@ svg .fill { fill: currentColor; stroke: none; }
       for (let up = 0; up < 8 && y >= 0; up++, y--) {
         const i = y * w + x, b = this.t[i];
         if (b === 0 || KIND[b] === K.gas || KIND[b] === K.fire || KIND[b] === K.spark || KIND[b] === K.cloud) {
-          this.t[i] = p.m; this.life[i] = p.l; this.shade[i] = p.s; this.fuel[i] = 0; this.skin[i] = p.sk;
+          this.t[i] = p.m; this.life[i] = p.l; this.shade[i] = p.s; this.fuel[i] = 0; this.skin[i] = p.sk; if (this.hasTint) this.tint[i] = 0;
           if (p.sk) this.hasSkins = true;
           this.stamp[i] = this.clock;
           return;
@@ -2977,6 +3088,15 @@ svg .fill { fill: currentColor; stroke: none; }
     abilities(c, A, here) {
       const x = Math.round(c.x), y = Math.round(c.y), w = this.w;
       if (A.fx && x >= 0 && y >= 0 && x < w && y < this.h) for (let k = 0; k < 4; k++) this.effects(y * w + x, x, y, A.fx, c.k); // a creature's aura
+      if (A.fx && A.fx.teleport && rnd() < 0.004) { // a creature that blinks about
+        for (let tries = 0; tries < 8; tries++) {
+          const nx = c.x + ri(31) - 15, ny = c.y + ri(21) - 10;
+          if (nx > 1 && ny > 0 && nx < w - 2 && ny < this.h - 1 && this.canBe(c.k, this.cellAt(nx, ny))) {
+            for (let k = 0; k < 4; k++) { const sx = Math.round(c.x) + ri(5) - 2, sy = Math.round(c.y) + ri(3) - 2; if (sx >= 0 && sy >= 0 && sx < w && sy < this.h && this.t[sy * w + sx] === 0) this.put(sy * w + sx, M.SPARKLE, 6 + ri(8)); }
+            c.x = nx; c.y = ny; break;
+          }
+        }
+      }
       // Zaps: every so often a short crackling arc of lightning jumps out of it.
       if (A.zaps) {
         if (!c.zt) c.zt = 90 + ri(150);
@@ -3388,7 +3508,7 @@ svg .fill { fill: currentColor; stroke: none; }
       for (let i = 0; i < n; i++) {
         const m = t[i];
         if (m === 0) { px[i] = 0; continue; }
-        if (GLOWS[m] && glowN < 4000) glowList[glowN++] = i;
+        if (glowN < 4000) { if (GLOWS[m]) glowList[glowN++] = i; else if (this.hasSkins && this.skin[i] && GLOWS[this.skin[i]] && LIKE[this.skin[i]] === m) glowList[glowN++] = i; }
         if (CONDUCT[m] && life[i] > 0) { px[i] = SPARK_RGB; continue; }
         let s = sh[i] >> 4, cm = m;
         if (this.hasSkins) { const sk = this.skin[i]; if (sk && LIKE[sk] === m) cm = sk; }
@@ -3408,11 +3528,11 @@ svg .fill { fill: currentColor; stroke: none; }
         else if (m === M.PLASMA || m === M.FIREWORK) s = (s + fr) & 15;
         else if (m === M.ROCKET) s = fr & 1 ? 0 : 6;
         else if (m === M.WALL) { const x = i % this.w, y = (i / this.w) | 0, row = (y / 3) | 0; s = (y % 3 === 2 || (x + (row & 1) * 3) % 6 === 5) ? 15 : (sh[i] >> 6); } // bricks and mortar
-        px[i] = C[cm * 16 + s];
+        px[i] = this.hasTint && this.tint[i] ? C[this.tint[i] * 16 + (this.tint[i] === M.RAINBOW ? ((i % this.w) + ((i / this.w) | 0) + (fr >> 1)) & 15 : s)] : C[cm * 16 + s];
       }
       // Glowing elements light up the empty space around them.
       for (let k = 0; k < glowN; k++) {
-        const i = glowList[k], gx = i % this.w, gy = (i / this.w) | 0, [cr, cg, cb] = GLOWS[t[i]];
+        const i = glowList[k], gx = i % this.w, gy = (i / this.w) | 0, [cr, cg, cb] = GLOWS[t[i]] || GLOWS[this.skin[i]];
         for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
           const d = dx * dx + dy * dy; if (!d || d > 5) continue;
           const x = gx + dx, y = gy + dy; if (x < 0 || y < 0 || x >= this.w || y >= this.h) continue;
@@ -3456,6 +3576,7 @@ svg .fill { fill: currentColor; stroke: none; }
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const a = (y + oyThis) * this.w + x + ox, b = (y + oyOther) * other.w + x;
         this.t[a] = other.matAt(b); this.life[a] = other.life[b]; this.fuel[a] = other.fuel[b];
+        if (other.hasTint && other.tint[b]) { this.tint[a] = other.tint[b]; this.hasTint = true; }
       }
       this.discovered.set(other.discovered);
       const dy = oyThis - oyOther;
@@ -3499,7 +3620,7 @@ svg .fill { fill: currentColor; stroke: none; }
     M.HOUSE, M.VOLCANO, M.CHEST, M.SNOWMAN, M.CAMPFIRE, M.CASTLE,
     M.GLOWSTONE, M.GLUE, M.BOUNCY, M.IRON, M.MAGNET, M.COPPER, M.BATTERY, M.DRYICE, M.NITRO, M.CHOCOLATE, M.MELTCHOC, M.CORAL,
     M.SUGAR, M.CARAMEL, M.CANDY, M.COTTONCANDY, M.WAX, M.MELTWAX, M.PAPER, M.TAR, M.SOAP, M.STEEL, M.GLITTER, M.NEON, M.PEARL,
-    M.OWL, M.BAT, M.TURTLE, M.MOUSE, M.OCTOPUS, M.PHOENIX, M.UNICORN, M.DUCK, M.WALL,
+    M.OWL, M.BAT, M.TURTLE, M.MOUSE, M.OCTOPUS, M.PHOENIX, M.UNICORN, M.DUCK, M.WALL, M.WEB,
     M.LIGHTHOUSE, M.PYRAMID, M.IGLOO, M.CANDLE, M.FOUNTAIN, M.GINGERBREAD];
   const brewed = (m) => MATS[m].magic || MATS[m].crafted || MATS[m].creature || MATS[m].object || MATS[m].invented;
   const isCreature = (m) => m > 0 && m < COUNT && !!MATS[m].creature;
@@ -3535,7 +3656,7 @@ svg .fill { fill: currentColor; stroke: none; }
     // The world is stored as three compact byte strings: material, age and memory
     // (age keeps fires and growing trees going; memory is what a mirror copies).
     return { v: 1, disc, unseen: [...unseen], hinted: [...hinted], tool, brush, inv: inventions,
-      world: { w: world.w, h: world.h, t: pack(world.exportT()), l: pack(world.life), f: pack(world.fuel),
+      world: { w: world.w, h: world.h, t: pack(world.exportT()), l: pack(world.life), f: pack(world.fuel), p: world.hasTint ? pack(world.tint) : undefined,
         c: world.creatures.map((c) => [c.k, Math.round(c.x), Math.round(c.y), c.dir, c.into || 0, c.s === 5 ? 5 : 0, Math.min(c.age || 0, 99999)]) } };
   }
   function writeSave() {
@@ -3559,7 +3680,7 @@ svg .fill { fill: currentColor; stroke: none; }
       const old = new World(w, h);
       unpack(sw.t, old.t, COUNT);
       for (let i = 0; i < old.t.length; i++) if (MATS[old.t[i]].reserved) old.t[i] = 0; // an invention that's gone
-      try { if (sw.l) { unpack(sw.l, old.life, 256); old.hadLife = true; } if (sw.f) unpack(sw.f, old.fuel, 256); } catch (e) { /* older saves: ages start fresh */ }
+      try { if (sw.l) { unpack(sw.l, old.life, 256); old.hadLife = true; } if (sw.f) unpack(sw.f, old.fuel, 256); if (sw.p) { unpack(sw.p, old.tint, COUNT); for (let i = 0; i < old.tint.length; i++) if (old.tint[i] && MATS[old.tint[i]].reserved) old.tint[i] = 0; old.hasTint = true; } } catch (e) { /* older saves: ages start fresh */ }
       if (Array.isArray(sw.c)) sw.c.slice(0, window.SandSim.MAX_CREATURES).forEach((a) => {
         if (!Array.isArray(a) || !isCreature(a[0])) return;
         const c = old.spawn(a[0], +a[1] || 0, +a[2] || 0, false); if (!c) return;
@@ -3587,6 +3708,8 @@ svg .fill { fill: currentColor; stroke: none; }
       if (old && !old.hadLife) for (let i = 0; i < next.t.length; i++) if (next.t[i] && !next.life[i]) next.life[i] = next.defaultLife(next.t[i]);
       ORDER.forEach((m) => { if (MATS[m].start) next.discovered[m] = 1; });
       if (saved && saved.disc) saved.disc.forEach((m) => { if (m > 0 && m < COUNT) next.discovered[m] = 1; });
+      // Every invention you made counts as found (one could slip through if you changed picks while the AI was thinking).
+      inventions.forEach((r) => { if (r && MATS[r.id] && !MATS[r.id].reserved) next.discovered[r.id] = 1; });
       if (saved) {
         unseen = new Set(saved.unseen || []); hinted = new Set(saved.hinted || []);
         if (saved.tool === ERASE || saved.tool === DROPPER || (saved.tool && saved.tool !== M.CAULDRON && next.discovered[saved.tool])) tool = saved.tool;
@@ -4136,28 +4259,76 @@ svg .fill { fill: currentColor; stroke: none; }
      The AI may list them; older inventions (and quieter AIs) get them from words in the name and description. */
   const FX_WORDS = {
     wind: /\b(storm|sandstorm|snowstorm|blizzard|tornado|twister|cyclone|hurricane|gales?|gusts?|gusty|whirl|whirlwind|whirling|windy|winds?|breeze|tempest|vortex|swirl|swirling)\b/,
-    freeze: /\b(icy|ice|frost|frosty|frozen|freez\w*|glacial|glacier|arctic|polar|chill\w*|cold|frigid|wintry)\b/,
-    sparks: /\b(sparks|electric\w*|lightning|zaps?|shock\w*|volt\w*|thunder\w*|crackl\w*|static|charged)\b/,
+    freeze: /\b(icy|ice|frost|frosty|frozen|freez\w*|glacial|glacier|arctic|polar|chill\w*|cold|frigid|wintry|winter)\b/,
+    sparks: /\b(sparks?|electr\w*|lightning|zaps?|shock\w*|volt\w*|thunder\w*|crackl\w*|static|charged)\b/,
     fog: /\b(blind\w*|fog|foggy|mist|misty|haze|hazy|smok\w*|obscur\w*|murk\w*|steamy)\b/,
     burn: /\b(blaz\w*|burn\w*|fiery|flaming|flames|scorch\w*|inferno|ignit\w*|molten)\b/,
     melt: /\b(warm\w*|melts?|melting|heats?|thaw\w*)\b/,
     corrode: /\b(acid\w*|corros\w*|corrod\w*|dissolv\w*|erod\w*)\b/,
     rain: /\b(rain\w*|drizzl\w*|showers?|downpour|drip\w*)\b/,
+    grow: /\b(grows?(?! (\w+ )?crystals?)|growing(?! (\w+ )?crystals?)|spread\w*|multipl\w*|creep\w*|overgrow\w*)\b/,
+    plants: /\b(sprout\w*|plant life|plants?|vegetation|grass\w*|garden\w*|terraform\w*|foliage|greenery|jungle|forest|leafy|vines?)\b/,
+    bloom: /\b(bloom\w*|blossom\w*|flowers?|petals?|pollen\w*)\b/,
+    web: /\b(webs?|silk\w*|threads?|spins?|spinner|spinning|weav\w*)\b/,
+    paint: /\b(paint\w*|colou?rs (the|everything|it)|dyes?|stain\w*|tints?)\b/,
+    slime: /\b(slim(e|y)|gooey|ooz(e|es|ing))\b/,
+    pull: /\b(pulls?|pulling|gravit\w*|black hole|vacuum\w*|suck\w*|draws? (things |everything )?in|magneti[cz]\w*)\b/,
+    push: /\b(push\w*|repel\w*|force ?field|shockwaves?|knocks? (things )?back|blows? (things )?away)\b/,
+    levitate: /\b(levitat\w*|floats? up\w*|hover\w*|anti-?gravity|weightless|lifts? (things|everything))\b/,
+    shake: /\b(shak\w*|quak\w*|tremor\w*|rumbl\w*|vibrat\w*|crumbl\w*)\b/,
+    petrify: /\b(petrif\w*|turns? (things |everything )?(in)?to stone|fossil\w*|harden\w*|solidif\w*)\b/,
+    crystal: /\b(crystalli[sz]\w*|grows? (\w+ )?crystals?|crystal growth|geodes?)\b/,
+    rust: /\b(rust\w*|tarnish\w*|oxidi[sz]\w*)\b/,
+    heat: /\b(boil\w*|scald\w*|hot springs?|sizzl\w*|heats? up|evaporat\w*|dries|drying)\b/,
+    sponge: /\b(absorb\w*|soak\w*|spong\w*|thirsty|dries up)\b/,
+    purify: /\b(purif\w*|cleans?\b|cleaning|cleanse\w*|filter\w*|heal\w*)\b/,
+    bubbles: /\b(bubbl\w*|fizz\w*|froth\w*|foam\w*)\b/,
+    teleport: /\b(teleport\w*|blink\w*|warp\w*|portals?|vanish\w*|disappear\w*|wormholes?)\b/,
+    sparkles: /\b(sparkl\w*|glitter\w*|twinkl\w*|shimmer\w*|dazzl\w*)\b/,
+    life: /\b(attracts? (bugs|insects|life|butterflies)|brings? life|teem\w*|full of life|life-giving|swarm\w*|fireflies|butterfl\w*)\b/,
+    rainbow: /\b(rainbow\w*|prism\w*|colou?rful|multi-?colou?r\w*|aurora\w*|kaleidoscop\w*)\b/,
   };
   const FX_NAMES = Object.keys(FX_WORDS);
-  const FX_LABEL = { wind: 'wind', freeze: 'frost', sparks: 'sparks', fog: 'fog', burn: 'burns', melt: 'melts ice', corrode: 'corrodes', rain: 'rain' };
+  const GLOW_WORDS = /\b(glow\w*|luminous|radiant|lights? up|shin(es|ing|y)|aurora|lamp)\b/;
+  // Hand-picked fixes for inventions whose words don't tell the whole story (exact: ignore the word rules).
+  const FX_FIXES = {
+    'glacial storm': { state: 'powder', calm: true, effects: ['wind', 'freeze', 'sparks', 'fog'] },
+    'honey bird': { effects: [], exact: true },          // it slides on ice; it doesn't freeze things
+    'toxic sludge': { effects: ['corrode'] },
+    'snow petal': { effects: ['freeze'] },
+    'snow sand': { effects: ['freeze'] },
+    'dewdrop': { effects: ['rain'] },
+    'skyburst': { effects: ['sparks'] },
+    'fire lizard': { effects: ['burn'] },
+    'sweet smoke': { effects: ['fog', 'burn'] },
+    'cloud crystal': { effects: ['rain'] },
+    'water moss': { effects: ['rain'] },
+  };
+  const FX_LABEL = { wind: 'wind', freeze: 'frost', sparks: 'sparks', fog: 'fog', burn: 'burns', melt: 'melts ice', corrode: 'corrodes', rain: 'rain', grow: 'spreads', plants: 'sprouts plants', bloom: 'flowers', web: 'webs', paint: 'paints', slime: 'slime', pull: 'pulls things in', push: 'pushes things away', levitate: 'levitates', shake: 'shakes the ground', petrify: 'turns things to stone', crystal: 'grows crystals', rust: 'rusts metal', heat: 'boils water', sponge: 'soaks up water', purify: 'purifies', bubbles: 'bubbles', teleport: 'teleports', sparkles: 'sparkles', life: 'attracts life', rainbow: 'rainbow colours', };
   function fxFor(spec, name, desc) {
-    const said = (name + ' ' + desc).toLowerCase(), fx = {};
-    const listed = Array.isArray(spec && spec.effects) ? spec.effects.map((v) => String(v).toLowerCase()) : [];
-    FX_NAMES.forEach((k) => { if (listed.includes(k) || FX_WORDS[k].test(said)) fx[k] = 1; });
+    const said = (name + ' ' + desc).toLowerCase(), fx = {}, fix = FX_FIXES[String(name).trim().toLowerCase()];
+    const listed = (Array.isArray(spec && spec.effects) ? spec.effects : []).concat(fix ? fix.effects : []).map((v) => String(v).toLowerCase());
+    FX_NAMES.forEach((k) => { if (listed.includes(k) || (!(fix && fix.exact) && FX_WORDS[k].test(said))) fx[k] = 1; });
     return Object.keys(fx).length ? fx : null;
   }
   function buildEntry(spec, a, b, parts) {
+    const fix = spec && FX_FIXES[String(spec.name || '').trim().toLowerCase()];
+    if (fix && fix.state) spec = Object.assign({}, spec, { state: fix.state });
+    if (fix && fix.calm) spec = Object.assign({}, spec, { properties: (Array.isArray(spec.properties) ? spec.properties : []).filter((p) => p !== 'explosive') });
     const e = buildEntry0(spec, a, b, parts);
     if (!e || e.object || e.kind === 'stamp' || e.move === 'egg') return e;
     const fx = fxFor(spec, e.name, e.desc || '');
     if (!fx) return e;
-    if (e.creature) { if (e.abil && e.abil.zaps) delete fx.sparks; if (Object.keys(fx).length) e.abil.fx = fx; }
+    // Explosives would set themselves off with their own sparks or flames: they only go off when you bring fire.
+    const boomy = (e.props && e.props.volatile) || (e.like && MATS[e.like].props && MATS[e.like].props.volatile);
+    if (boomy) { delete fx.sparks; delete fx.burn; }
+    // Spreading: only solids and powders, and not ones that already grow their own way (that would never stop).
+    if (fx.grow && !e.creature) {
+      const kind = e.like ? MATS[e.like].kind : e.kind, ownGrow = (e.props && e.props.grows) || (e.like && MATS[e.like].props && MATS[e.like].props.grows);
+      if (ownGrow || (kind !== 'solid' && kind !== 'powder')) delete fx.grow;
+    }
+    if (!Object.keys(fx).length) return e;
+    if (e.creature) { if (e.abil && e.abil.zaps) delete fx.sparks; delete fx.grow; if (!Object.keys(fx).length) return e; e.abil.fx = fx; } // creatures don't spread copies of themselves
     else e.fx = fx;
     e.fxText = Object.keys(fx).map((k) => FX_LABEL[k]).join(', ');
     return e;
@@ -4248,7 +4419,8 @@ svg .fill { fill: currentColor; stroke: none; }
     let like = raw != null && !saidNone ? findByName(raw) : 0;
     if (!likeOk(like)) like = 0;
     if (!like && raw == null) like = likeFromName(name);
-    if (like) return Object.assign(base, { like, colors: [cols[0], cols[1]], hint: 'Invented by the Cauldron spirit. Acts like ' + MATS[like].name + '.' });
+    if (like) return Object.assign(base, { like, colors: [cols[0], cols[1]], hint: 'Invented by the Cauldron spirit. Acts like ' + MATS[like].name + '.',
+      skinGlow: (Array.isArray(spec.properties) && spec.properties.includes('glows')) || GLOW_WORDS.test((name + ' ' + desc).toLowerCase()) ? rgb : undefined });
     // A plain element. Small models sometimes leave things out, so fill gaps from the name and description.
     const words = (name + ' ' + desc).toLowerCase();
     const guessState = /\b(gas|mist|fog|smoke|vapou?r|cloud|steam|air)\b/.test(words) ? 'gas' : /\b(liquid|goo|juice|water|syrup|slime|potion|lava|ooze|drip|flows?)\b/.test(words) ? 'liquid'
@@ -4261,12 +4433,12 @@ svg .fill { fill: currentColor; stroke: none; }
     hint(/sticky|glue|gooey/, 'sticky'); hint(/bounc/, 'bouncy'); hint(/explod|boom|blast|bang/, 'explosive'); hint(/magnet/, 'magnetic');
     hint(/burn|flammab|fuel/, 'flammable'); hint(/\bhot\b|blaz|scorch|molten|fiery/, 'hot'); hint(/\bcold\b|frost|freez|icy|chill/, 'cold');
     hint(/\bgrows?\b|sprout|spread/, 'grows'); hint(/melt/, 'melts'); hint(/evaporat|fades? away|vanish/, 'evaporates');
-    if (has(pr, 'glows')) props.glow = rgb;
+    if (has(pr, 'glows') || GLOW_WORDS.test((name + ' ' + desc).toLowerCase())) props.glow = rgb;
     if (has(pr, 'sticky') && state !== 'gas') props.sticky = true;
     if (has(pr, 'bouncy') && state === 'powder') props.bounce = true;
     if (has(pr, 'magnetic') && state === 'solid') props.magnet = true;
     if (has(pr, 'conducts') && state === 'solid') props.conducts = true;
-    if (has(pr, 'explosive')) props.volatile = true;
+    if (has(pr, 'explosive') || BOOM_WORDS.test(name + ' ' + desc) || /\bburst\b/i.test(name + ' ' + desc)) props.volatile = true; // bombs really go off
     if (has(pr, 'evaporates') && state !== 'gas') props.evaporates = [state === 'liquid' ? M.STEAM : M.SMOKE, 0.003];
     if (has(pr, 'melts') && (state === 'solid' || state === 'powder')) props.melts = [M.WATER, 0.06];
     if (has(pr, 'freezes') && state === 'liquid') props.freezes = [M.ICE, 0.06];
@@ -4382,7 +4554,7 @@ svg .fill { fill: currentColor; stroke: none; }
     const STATES = ['powder', 'liquid', 'gas', 'solid'];
     const PROPS = ['glows', 'sticky', 'bouncy', 'flammable', 'explosive', 'evaporates', 'melts', 'freezes', 'grows', 'magnetic', 'conducts', 'hot', 'cold'];
     const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg', 'paddle', 'amphibian'];
-    const EFFECTS = ['wind', 'freeze', 'sparks', 'fog', 'burn', 'melt', 'corrode', 'rain'];
+    const EFFECTS = ['wind', 'freeze', 'sparks', 'fog', 'burn', 'melt', 'corrode', 'rain', 'grow', 'plants', 'bloom', 'web', 'paint', 'slime', 'pull', 'push', 'levitate', 'shake', 'petrify', 'crystal', 'rust', 'heat', 'sponge', 'purify', 'bubbles', 'teleport', 'sparkles', 'life', 'rainbow'];
     const ABILITIES = ['breathes_fire', 'glows', 'fireproof', 'grazes', 'lays_eggs', 'eats_bugs', 'eats_fish', 'scared_of_fire', 'leaves_trail', 'fast', 'slow', 'zaps', 'explodes'];
     // Materials an object can be built from (names must match the game).
     // Built-in elements an invented element can act like.
@@ -4421,9 +4593,9 @@ svg .fill { fill: currentColor; stroke: none; }
     Answer with JSON only. Fields:
     - name: 1 to 3 words, Title Case, max 22 characters. No real people, brands or anything scary, violent or rude.
     - type: "element" (a material: powder, liquid, gas or solid), "creature" (an animal or being that moves) or "object" (a small build made of existing materials).
-    - description: one short, fun sentence (max 80 characters) saying what it does in the game.
+    - description: one short, fun sentence (max 80 characters) saying what it does in the game. Only describe what it really does with the behaves_like, properties, movement, abilities and effects you pick. Never promise something the game can't do.
     - colors: 2 to 4 hex colours like "#ff8800" that suit it.
-    - effects: what it does to the world around it, so the description comes true, from: ${EFFECTS.join(', ')}. (wind = stirs up gusts that blow sand about; freeze = freezes water and makes snow; sparks = crackles with little lightning sparks; fog = gives off fog; burn = sets things alight; melt = melts ice and snow; corrode = eats away nearby things; rain = drips water). Use [] if none fit.
+    - effects: what it does to the world around it, so the description comes true, from: ${EFFECTS.join(', ')}. (wind = stirs up gusts that blow sand about; freeze = freezes water and makes snow; sparks = crackles with little lightning sparks; fog = gives off fog; burn = sets things alight; melt = melts ice and snow; corrode = eats away nearby things; rain = drips water; grow = slowly spreads itself; plants = sprouts plant life from soil; bloom = makes flowers sprout; web = spins sticky webs; paint = colours what it touches; slime = leaves slime; pull = draws loose things and creatures towards it; push = shoves them away; levitate = makes nearby powders float up; shake = shakes the ground so piles slump and crumble; petrify = turns sand, mud and water to stone; crystal = grows crystals; rust = rusts metal; heat = boils water into steam; sponge = soaks up water; purify = turns acid and swamp into clean water; bubbles = gives off bubbles; teleport = blinks to nearby spots; sparkles = twinkles; life = fireflies, bees or butterflies appear near it; rainbow = paints things in rainbow colours). Use [] if none fit.
     For an element also give:
     - behaves_like: the game element it acts most like, so it really does that in the world (it keeps its own name and colours).
       Choose from: ${LIKE_NAMES.join(', ')}. Examples: Thunderbolt -> Lightning, Magma Goo -> Lava, Frost Flame -> Cold Fire,
@@ -4945,7 +5117,10 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     let id = 0;
     if (got.spec) { id = registerInvention({ a: ids[0], b: ids[1], parts: ids.length > 2 ? ids.slice() : undefined, spec: got.spec }); if (id) { saveInventions(); renderPalette(); writeSaveSoon(); } }
     thinking = false;
-    if (multiKey(used()) !== multiKey(ids) || used().length !== ids.length) { renderSlots(); return; } // they picked something else meanwhile
+    if (multiKey(used()) !== multiKey(ids) || used().length !== ids.length) { // they picked something else meanwhile
+      if (id && !world.discovered[id]) { world.discovered[id] = 1; discovered(id); }
+      renderSlots(); return;
+    }
     renderSlots();
     brew(true);
     if (!id) {
