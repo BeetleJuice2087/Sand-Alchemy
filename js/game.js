@@ -54,6 +54,7 @@
   let tool = M.SAND, brush = 1, paused = false;
   let unseen = new Set();   // discovered but not yet tapped in the toolbar
   let hinted = new Set();   // ??? cards whose hint has been shown
+  let revealed = new Set(); // ??? cards you gave up on: they show the name and how to make it (still to be found)
   /* Favorites: things you pinned for easy access. They show first in the toolbar and in Search.
      Long-press (or right-click) a toolbar button, or tap the star on its card in the book. */
   const FAV_KEY = 'sandalchemy.favs.v1';
@@ -82,7 +83,7 @@
     // The world is stored as compact strings: material, age and memory
     // (age keeps fires and growing trees going; memory is what a mirror copies).
     // Version 2 stores material, memory and paint as two bytes per cell (ids go past 255).
-    return { v: 2, disc, unseen: [...unseen], hinted: [...hinted], favs, tool, brush, inv: inventions,
+    return { v: 2, disc, unseen: [...unseen], hinted: [...hinted], revealed: [...revealed], favs, tool, brush, inv: inventions,
       world: { w: world.w, h: world.h, t: pack16(world.exportT()), l: pack(world.life), f: pack16(world.fuel), p: world.hasTint ? pack16(world.tint) : undefined,
         c: world.creatures.map((c) => [c.k, Math.round(c.x), Math.round(c.y), c.dir, c.into || 0, c.s === 5 ? 5 : 0, Math.min(c.age || 0, 99999)]) } };
   }
@@ -144,7 +145,7 @@
       // Every invention you made counts as found (one could slip through if you changed picks while the AI was thinking).
       inventions.forEach((r) => { if (r && MATS[r.id] && !MATS[r.id].reserved) next.discovered[r.id] = 1; });
       if (saved) {
-        unseen = new Set(saved.unseen || []); hinted = new Set(saved.hinted || []);
+        unseen = new Set(saved.unseen || []); hinted = new Set(saved.hinted || []); revealed = new Set(saved.revealed || []);
         if (Array.isArray(saved.favs) && !favs.length) { favs = saved.favs.filter((m) => m > 0 && m < COUNT); try { localStorage.setItem(FAV_KEY, JSON.stringify(favs)); } catch (e) { /* ignore */ } }
         if (!(saved.v >= 2)) { if (saved.tool === 255) saved.tool = ERASE; else if (saved.tool === 254) saved.tool = DROPPER; } // older saves
         if (saved.tool === ERASE || saved.tool === DROPPER || (saved.tool && saved.tool !== M.CAULDRON && next.discovered[saved.tool])) tool = saved.tool;
@@ -447,14 +448,16 @@
         g.append(hd);
       }
       const mat = MATS[m], found = world.discovered[m];
-      const c = document.createElement(found ? 'div' : 'button');
-      c.className = 'card' + (found ? '' : ' locked' + (hinted.has(m) ? ' hinted' : '')); c.dataset.m = m;
+      const c = document.createElement('div'), shown = !found && revealed.has(m);
+      c.className = 'card' + (found ? '' : ' locked' + (hinted.has(m) ? ' hinted' : '') + (shown ? ' revealed' : '')); c.dataset.m = m;
       const sw = document.createElement('i');
-      if (found) { sw.className = 'sw'; sw.setAttribute('style', swatchStyle(m)); } else { sw.className = 'sw unknown'; sw.textContent = '?'; }
-      const txt = document.createElement('div'), b = document.createElement('b'), s = document.createElement('span');
-      b.textContent = found ? mat.name : '???';
       const how = (mat.start ? 'Starting element' : brewed(m) ? 'Brew: ' + mat.recipe : mat.recipe) + (mat.also ? ' · ' + mat.also : '');
-      s.textContent = found ? how + (mat.desc ? ' · ' + mat.desc : '') + (mat.fxText ? ' · Does: ' + mat.fxText : '') : hinted.has(m) ? mat.hint : 'Tap for a hint';
+      const txt = document.createElement('div'), b = document.createElement('b'), s = document.createElement('span');
+      const showReal = () => { sw.className = 'sw' + (found ? '' : ' faded'); sw.textContent = ''; sw.setAttribute('style', swatchStyle(m)); };
+      if (found || shown) showReal(); else { sw.className = 'sw unknown'; sw.textContent = '?'; }
+      b.textContent = found || shown ? mat.name : '???';
+      s.textContent = found ? how + (mat.desc ? ' · ' + mat.desc : '') + (mat.fxText ? ' · Does: ' + mat.fxText : '')
+        : shown ? how + ' (not found yet)' : hinted.has(m) ? mat.hint : 'Tap for a hint';
       txt.append(b, s); c.append(sw, txt);
       if (found) {
         const st = document.createElement('button'); st.type = 'button'; st.className = 'card-fav' + (isFav(m) ? ' on' : '');
@@ -470,9 +473,21 @@
         x.addEventListener('click', (e) => { e.stopPropagation(); askDelete(m); });
         c.classList.add('has-del'); c.append(x);
       }
-      if (!found) {
-        c.type = 'button';
-        c.addEventListener('click', () => { hinted.add(m); c.classList.add('hinted'); s.textContent = mat.hint; writeSaveSoon(); });
+      if (!found && !shown) {
+        // Tap once for a hint; still stuck? The Reveal button shows what it is and how to make it.
+        c.setAttribute('role', 'button'); c.tabIndex = 0;
+        const rv = document.createElement('button'); rv.type = 'button'; rv.className = 'card-reveal'; rv.textContent = 'Reveal';
+        rv.setAttribute('aria-label', 'Reveal what this is');
+        rv.hidden = !hinted.has(m);
+        rv.addEventListener('click', (e) => {
+          e.stopPropagation(); revealed.add(m); hinted.add(m); writeSaveSoon();
+          c.classList.add('revealed'); showReal(); b.textContent = mat.name; s.textContent = how + ' (not found yet)';
+          c.removeAttribute('role'); c.tabIndex = -1; rv.remove();
+        });
+        const hint = () => { if (revealed.has(m)) return; hinted.add(m); c.classList.add('hinted'); s.textContent = mat.hint; rv.hidden = false; writeSaveSoon(); };
+        c.addEventListener('click', hint);
+        c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hint(); } });
+        txt.append(rv);
       }
       g.append(c);
     });
@@ -2090,7 +2105,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     $('#ai-log-clear').addEventListener('click', () => { aiLogLines = []; try { localStorage.removeItem(AILOG_KEY); } catch (e) { /* ignore */ } pre.textContent = '(empty)'; });
   })();
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 12, update 25';
+  const GAME_VERSION = 'Oct 12, update 26';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();
