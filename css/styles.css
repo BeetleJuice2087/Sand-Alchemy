@@ -117,6 +117,11 @@ svg .fill { fill: currentColor; stroke: none; }
   .icon-btn svg { width: 18px; height: 18px; }
 }
 @media (max-width: 350px) { .logo span { display: none; } }
+/* However big the phone's text setting is, the top bar never pushes the page sideways: the title gives way first. */
+.logo { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 440px) { .logo { white-space: normal; line-height: 1.05; } } /* stacks into two lines when it's tight */
+html, body { overflow-x: hidden; }
+@media (max-width: 400px) { .top .icon-btn { width: 34px; height: 34px; } .top { gap: 5px; } }
 
 /* ---------------- Cauldron (mixing panel) ---------------- */
 .pot-btn { position: relative; display: grid; place-items: center; gap: 1px; flex: none; width: 56px; height: 64px; padding: 6px 0 5px; border-radius: 14px; cursor: pointer;
@@ -364,3 +369,12 @@ svg .fill { fill: currentColor; stroke: none; }
   display: grid; place-items: center; cursor: pointer; padding: 0; font-size: 15px; line-height: 1; }
 .card-fav.on { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 60%, var(--line)); }
 .card.has-del .card-fav { top: 38px; } /* under the delete button */
+
+/* Reveal: for ??? cards you're stuck on */
+.card-reveal { display: block; margin-top: 6px; padding: 4px 12px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--gold) 55%, var(--line));
+  background: color-mix(in srgb, var(--gold) 14%, var(--surface)); color: var(--gold); font: inherit; font-size: 0.74rem; font-weight: 800; cursor: pointer; }
+.card-reveal[hidden] { display: none; }
+.card.revealed { cursor: default; }
+.card.revealed b { color: var(--text); }
+.card.revealed span { color: var(--muted); }
+.sw.faded { opacity: 0.55; }
