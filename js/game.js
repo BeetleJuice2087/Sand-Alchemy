@@ -2090,7 +2090,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     $('#ai-log-clear').addEventListener('click', () => { aiLogLines = []; try { localStorage.removeItem(AILOG_KEY); } catch (e) { /* ignore */ } pre.textContent = '(empty)'; });
   })();
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 12, update 24';
+  const GAME_VERSION = 'Oct 12, update 25';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();

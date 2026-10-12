@@ -613,18 +613,19 @@
     stepFlying() {
       const w = this.w, h = this.h, t = this.t, list = this.flying, keep = [];
       const open = (m) => m === 0 || KIND[m] === K.gas || KIND[m] === K.fire || KIND[m] === K.spark || KIND[m] === K.cloud;
-      const H = this.holes, bh = H ? H.bh : null, wh = H ? H.wh : null;
+      const H = this.holes, bh = H ? H.bhC : null, wh = H ? H.whC : null;
       flight: for (const p of list) {
         if (p.zg > 0) p.zg--; // spat out of a white hole: floats like space dust for a while
         else { p.vy = Math.min(p.vy + 0.16, 6); p.vx *= 0.985; }
         if (H) { // gravity: black holes pull grains in (they curve and orbit), white holes push them away
-          for (let e = 0; e < bh.length; e += 2) {
-            const dx = bh[e] - p.x, dy = bh[e + 1] - p.y, d2 = dx * dx + dy * dy + 1;
-            if (d2 < 6) { this.swallowed(p.m, p.sk); continue flight; }
-            const d = Math.sqrt(d2), a = Math.min(0.6, (p.zg ? 90 : 16) / d2); p.vx += dx / d * a; p.vy += dy / d * a;
+          for (const b of bh) { // pull grows with the hole's size
+            const dx = b.x - p.x, dy = b.y - p.y, d2 = dx * dx + dy * dy + 1;
+            if (d2 < (b.r + 1.6) ** 2) { this.swallowed(p.m, p.sk); continue flight; }
+            if (d2 > b.R * b.R * 2.2) continue;
+            const d = Math.sqrt(d2), a = Math.min(1 + b.s * 0.3, (p.zg ? 90 : 16) * b.n / d2); p.vx += dx / d * a; p.vy += dy / d * a;
           }
-          for (let e = 0; e < wh.length; e += 2) {
-            const dx = p.x - wh[e], dy = p.y - wh[e + 1], d2 = dx * dx + dy * dy + 1, d = Math.sqrt(d2), a = Math.min(p.zg ? 0.15 : 0.5, (p.zg ? 4 : 12) / d2);
+          for (const b of wh) {
+            const dx = p.x - b.x, dy = p.y - b.y, d2 = dx * dx + dy * dy + 1, d = Math.sqrt(d2), a = Math.min((p.zg ? 0.4 : 1) * Math.max(1, b.s), (p.zg ? 4 : 12) * b.n / d2);
             p.vx += dx / d * a; p.vy += dy / d * a;
           }
           if (p.vx > 9) p.vx = 9; else if (p.vx < -9) p.vx = -9; if (p.vy < -9) p.vy = -9;
@@ -701,6 +702,26 @@
       this.stamp[q] = this.clock;
       return true;
     }
+    /* The separate blobs of material m: [{ x, y, n, r, s, R }] (centre, cells, radius, strength, reach), biggest first. */
+    clusters(m) {
+      const t = this.t, w = this.w, h = this.h, seen = this._seen && this._seen.length === t.length ? this._seen : (this._seen = new Uint8Array(t.length));
+      const out = [], used = [], stack = [];
+      for (let k = 0; k < t.length && out.length < 32; k++) {
+        if (t[k] !== m || seen[k]) continue;
+        let n = 0, sx = 0, sy = 0; stack.push(k); seen[k] = 1; used.push(k);
+        while (stack.length) {
+          const q = stack.pop(), qx = q % w, qy = (q / w) | 0; n++; sx += qx; sy += qy;
+          if (qx > 0 && t[q - 1] === m && !seen[q - 1]) { seen[q - 1] = 1; used.push(q - 1); stack.push(q - 1); }
+          if (qx < w - 1 && t[q + 1] === m && !seen[q + 1]) { seen[q + 1] = 1; used.push(q + 1); stack.push(q + 1); }
+          if (qy > 0 && t[q - w] === m && !seen[q - w]) { seen[q - w] = 1; used.push(q - w); stack.push(q - w); }
+          if (qy < h - 1 && t[q + w] === m && !seen[q + w]) { seen[q + w] = 1; used.push(q + w); stack.push(q + w); }
+        }
+        const s = Math.sqrt(n) / 3; // a 3x3 hole has strength 1
+        out.push({ x: sx / n, y: sy / n, n, r: Math.sqrt(n / Math.PI), s, R: Math.min(130, 50 + 7 * Math.sqrt(n)) });
+      }
+      for (const q of used) seen[q] = 0;
+      return out.sort((a, b) => b.n - a.n);
+    }
     /* Every frame: black holes pull, white holes push (and spit out what was swallowed), vacuums suck. */
     forces() {
       const H = this.holes, w = this.w, h = this.h, t = this.t;
@@ -734,8 +755,29 @@
           }
         }
       };
-      pass(H.bh, H.bhN, 70, -1, 1, M.BLACKHOLE);
-      pass(H.wh, H.whN, 45, 1, 1.2, M.WHITEHOLE);
+      // Holes: rays from the middle of each one; more rays, farther reach and a stronger grip the bigger it is.
+      const holePass = (list, sign, self) => {
+        for (const c of list) {
+          const rays = Math.min(120, Math.round(4 * c.n)), R = sign < 0 ? c.R : c.R * 0.65;
+          for (let k = 0; k < rays && this.flying.length < 4000; k++) {
+            const a = rnd() * Math.PI * 2, ux = Math.cos(a), uy = Math.sin(a);
+            let j = -1, d = 1;
+            for (; d <= R; d++) {
+              const xx = Math.round(c.x + ux * d), yy = Math.round(c.y + uy * d);
+              if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
+              const q = yy * w + xx, b = t[q];
+              if (b === 0 || b === M.SPARKLE || b === self) continue;
+              j = q; break;
+            }
+            if (j < 0 || !loose(t[j]) || rnd() > (sign < 0 ? 1 : 1.2) * c.s * 14 / (Math.max(0, d - c.r) + 8)) continue;
+            const dx = (j % w) - c.x, dy = ((j / w) | 0) - c.y;
+            if (sign < 0) { const v = Math.min(3.4 + c.s * 0.4, 1.6 + d * 0.03); grab(j, -dx / d * v, Math.max(-9, -dy / d * v - 0.08 * d / v)); } // aimed so it arcs right into the hole
+            else { const sp = Math.min(4.5, 1 + 30 * c.s / (d + 6)), sx = dx > 0 ? 1 : dx < 0 ? -1 : (rnd() < 0.5 ? -1 : 1); grab(j, dx / d * sp * 1.2 + sx * sp * 0.4, -(sp * 0.9 + 0.8) + (dy < 0 ? dy / d * sp * 0.6 : 0)); } // thrown outwards and up
+          }
+        }
+      };
+      holePass(H.bhC, -1, M.BLACKHOLE);
+      holePass(H.whC, 1, M.WHITEHOLE);
       pass(H.vac, H.vacN, 16, -1, 0.9, M.VACUUM);
       for (let e = 0; e < H.vac.length; e += 2) if (rnd() < 0.5) this.airForce(H.vac[e], H.vac[e + 1], -1, false); // the air rushes in too
       // White holes spit out whatever the black holes swallowed.
@@ -757,12 +799,16 @@
         if (c.dead || c.s === 9) continue;
         const near = (list, R) => { let best = -1, bd = R * R; for (let e = 0; e < list.length; e += 2) { const d = (list[e] - c.x) ** 2 + (list[e + 1] - c.y) ** 2; if (d < bd) { bd = d; best = e; } } return best < 0 ? null : [list[best], list[best + 1], Math.sqrt(bd)]; };
         const move = (hx, hy, d, sp) => { const nx = c.x + (hx - c.x) / (d || 1) * sp, ny = c.y + (hy - c.y) / (d || 1) * sp; if (this.canBe(c.k, this.cellAt(nx, ny))) { c.x = Math.max(1, Math.min(w - 2, nx)); c.y = Math.max(0, Math.min(h - 1, ny)); } };
-        let n = near(H.bh, 60);
-        if (n) { if (n[2] < 3) { c.dead = 'void'; if (c.k !== M.STICKMAN) this.swallowed(c.k, 0xFFFF); continue; } move(n[0], n[1], n[2], Math.min(1.4, 14 / (n[2] + 6))); }
-        n = near(H.vac, 14);
+        let gone = false;
+        for (const b of H.bhC) {
+          const d = Math.hypot(b.x - c.x, b.y - c.y); if (d > b.R * 0.85) continue;
+          if (d < b.r + 2.5) { c.dead = 'void'; if (c.k !== M.STICKMAN) this.swallowed(c.k, 0xFFFF); gone = true; break; }
+          move(b.x, b.y, d, Math.min(1.4 + b.s * 0.3, 14 * b.s / (d - b.r + 6)));
+        }
+        if (gone) continue;
+        let n = near(H.vac, 14);
         if (n) { if (n[2] < 2.5) { c.dead = 'void'; continue; } move(n[0], n[1], n[2], Math.min(1, 6 / (n[2] + 3))); }
-        n = near(H.wh, 40);
-        if (n) move(n[0], n[1], n[2], -Math.min(1.4, 14 / (n[2] + 6)));
+        for (const b of H.whC) { const d = Math.hypot(b.x - c.x, b.y - c.y); if (d < b.R * 0.6) move(b.x, b.y, d, -Math.min(1.4 + b.s * 0.3, 14 * b.s / (d - b.r + 6))); }
       }
     }
     /* A gravity bomb goes off: no crater, just a huge push that flings everything loose outwards. */
@@ -853,6 +899,8 @@
           else if (v === M.VACUUM) keep(H.vac, ++H.vacN, k); else if (v === M.PORTALOUT && outs.length < 3000) outs.push(k);
         }
         this.magnets = mg; this.hasSticky = sticky;
+        // Each separate black (or white) hole is one body: the bigger it is, the stronger and farther it pulls.
+        H.bhC = H.bhN ? this.clusters(M.BLACKHOLE) : []; H.whC = H.whN ? this.clusters(M.WHITEHOLE) : [];
         this.holes = H.bhN || H.whN || H.vacN ? H : null; this.portOut = outs;
       }
       this.blastsNow = 0;
