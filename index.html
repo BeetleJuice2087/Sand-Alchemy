@@ -448,7 +448,7 @@ svg .fill { fill: currentColor; stroke: none; }
         <div class="row ai-url-row"><input type="url" id="ai-url" autocomplete="off" spellcheck="false" aria-label="Worker address"><button class="ghost-btn" id="ai-test" type="button">Test</button></div>
       </details>
     </section>
-    <p class="game-ver" id="game-ver">Game version: Oct 10, update 9</p>
+    <p class="game-ver" id="game-ver">Game version: Oct 10, update 10</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -1591,7 +1591,7 @@ svg .fill { fill: currentColor; stroke: none; }
       this.onDiscover = null;
       this.pendingBlasts = [];
       this.flying = [];         // grains thrown by explosions, flying through the air
-      this.waves = [];          // shock waves spreading out from explosions
+      this.airOn = false;       // the air simulation sleeps until something stirs it
       this.blastsNow = 0;       // explosions this frame: a chain reaction throws things harder
       this.creatures = [];
       this.magnets = []; this.hasSticky = false; this.hasBouncy = false;
@@ -1698,70 +1698,116 @@ svg .fill { fill: currentColor; stroke: none; }
       }
       this.shove(cx, cy, r);
     }
-    /* The shock wave: a ring of air races outwards from the blast and shoves loose stuff (sand, dirt,
-       water, creatures) away as it passes. Explosions that go off together feed one bigger wave. */
-    shove(cx, cy, r) {
-      for (const wv of this.waves) {
-        if (wv.r < 10 && (wv.x - cx) ** 2 + (wv.y - cy) ** 2 < 144) { // part of the same blast: make it stronger
-          wv.power = Math.min(6, wv.power + 0.18); wv.x = (wv.x * 3 + cx) / 4; wv.y = (wv.y * 3 + cy) / 4; return;
-        }
-      }
-      if (this.waves.length < 40) this.waves.push({ x: cx, y: cy, r: r * 0.6, power: 1 });
+    /* ---------------- Air ----------------
+       The air is a coarse grid (one air cell per 4x4 world cells) with pressure and wind. An explosion
+       pushes the pressure up; it spreads out as a blast of wind, bounces off walls and squeezes through
+       gaps, then calms down. Strong enough wind picks up loose things: light ash and snow first, sand
+       and dirt in a real blast, heavy gold and iron only right next to it. */
+    initAir() {
+      const A = 4; this.A = A; this.aw = Math.ceil(this.w / A); this.ah = Math.ceil(this.h / A);
+      const n = this.aw * this.ah;
+      this.au = new Float32Array(n); this.av = new Float32Array(n); this.ap = new Float32Array(n); this.ap2 = new Float32Array(n);
+      this.asolid = new Uint8Array(n); this.airOn = false; this.airAge = 0;
     }
-    stepWaves() {
-      const w = this.w, h = this.h, t = this.t, fly = this.flying, keep = [];
-      for (const wv of this.waves) {
-        const max = 10 + 13 * wv.power;            // how far it reaches
-        const r0 = wv.r, r1 = r0 + 1.1 + wv.power * 0.2; // a few cells a frame: you can watch it roll out
-        const strength = 1 - r1 / max;             // fades as it spreads
-        if (strength <= 0) continue;
-        wv.r = r1; wv.strength = strength;
-        const cx = Math.round(wv.x), cy = Math.round(wv.y), R = Math.ceil(r1), r0s = r0 * r0, r1s = r1 * r1;
-        const open = (m) => m === 0 || KIND[m] === K.gas || KIND[m] === K.fire || KIND[m] === K.spark || KIND[m] === K.cloud;
-        const lift = Math.min(2.2, 0.6 + wv.power * 0.28);
-        // Bottom to top, so only the real surface (with air above it) is kicked, not a whole column.
-        for (let dy = R; dy >= -R; dy--) {
-          const y = cy + dy; if (y < 0 || y >= h) continue;
-          for (let dx = -R; dx <= R; dx++) {
-            const d2 = dx * dx + dy * dy; if (d2 <= r0s || d2 > r1s) continue;
-            const x = cx + dx; if (x < 0 || x >= w) continue;
-            const j = y * w + x, m = t[j];
-            if (!m || BOUNCE[m] || fly.length > 4000) continue;
-            const k = KIND[m];
-            if (k === K.gas) { // smoke and steam just get blown along
-              const d = Math.sqrt(d2) || 1, nx = Math.round(x + dx / d * 3), ny = Math.round(y + dy / d * 3);
-              if (nx >= 0 && ny >= 0 && nx < w && ny < h && t[ny * w + nx] === 0) this.swap(j, ny * w + nx);
-              continue;
-            }
-            if (k !== K.powder && k !== K.liquid && k !== K.skypowder) continue;
-            const d = Math.sqrt(d2) || 1, ux = dx / d, uy = dy / d;
-            // Is it on a surface facing the blast (air above, or air on the side the wave comes from)?
-            const above = y > 0 && open(t[j - w]);
-            const sx = x - Math.sign(dx), side = dx !== 0 && sx >= 0 && sx < w && open(t[y * w + sx]);
-            if (!above && !side) continue;
-            if (rnd() > 0.45 + 0.55 * strength) continue;
-            const kick = (0.7 + 3 * strength) * lift * (0.7 + rnd() * 0.6);
-            const vx = (ux * 0.9 + Math.sign(dx) * 0.4) * kick * 0.8;
-            const vy = above ? -(0.5 + rnd() * 0.7) * kick * 0.75 + Math.max(0, uy) * 0.3 : uy * kick * 0.5 - 0.3;
-            fly.push({ m, sk: this.hasSkins ? this.skin[j] : 0, l: this.life[j], s: this.shade[j], x, y, vx, vy });
-            t[j] = 0; this.skin[j] = 0; this.life[j] = 0;
-          }
+    shove(cx, cy, r) {
+      if (!this.au) this.initAir();
+      const A = this.A, ax = Math.min(this.aw - 1, (cx / A) | 0), ay = Math.min(this.ah - 1, (cy / A) | 0);
+      if (!this.airOn) { this.airSolids(); this.airOn = true; }
+      const add = (x, y, k) => { if (x < 0 || y < 0 || x >= this.aw || y >= this.ah) return; const i = y * this.aw + x; this.ap[i] += k * Math.max(0.15, 1 - this.ap[i] / 40); this.asolid[i] = 0; };
+      add(ax, ay, 7);
+      add(ax - 1, ay, 3); add(ax + 1, ay, 3); add(ax, ay - 1, 3); add(ax, ay + 1, 3);
+      this.airAge = 0;
+    }
+    // Which air cells are blocked by walls (mostly solid things that don't move).
+    airSolids() {
+      const A = this.A, w = this.w, h = this.h, t = this.t, aw = this.aw;
+      for (let ay = 0; ay < this.ah; ay++) for (let ax = 0; ax < aw; ax++) {
+        let solid = 0, tot = 0;
+        for (let y = ay * A; y < Math.min(h, ay * A + A); y++) for (let x = ax * A; x < Math.min(w, ax * A + A); x++) {
+          tot++; const k = KIND[t[y * w + x]];
+          if (k === K.solid || k === K.powder || k === K.liquid || k === K.skypowder) solid++;
         }
-        // Creatures the wave passes get knocked away from the blast.
-        for (const c of this.creatures) {
-          if (c.dead) continue;
-          const dx = c.x - wv.x, dy = c.y - wv.y, d2 = dx * dx + dy * dy;
-          if (d2 <= r0s || d2 > r1s) continue;
-          const d = Math.sqrt(d2) || 1, k = 3 * strength * Math.min(2, wv.power);
-          for (let s2 = 0; s2 < Math.ceil(k); s2++) {
-            const nx = c.x + dx / d, ny = c.y + dy / d - 0.3;
-            if (!this.canBe(c.k, this.cellAt(nx, ny))) break;
-            c.x = Math.max(1, Math.min(w - 2, nx)); c.y = Math.max(0, Math.min(h - 1, ny));
-          }
-        }
-        keep.push(wv);
+        this.asolid[ay * aw + ax] = solid * 4 >= tot * 3 ? 1 : 0; // packed sand counts as ground too
       }
-      this.waves = keep;
+    }
+    stepAir() {
+      const aw = this.aw, ah = this.ah, u = this.au, v = this.av, S = this.asolid;
+      let p = this.ap, q = this.ap2;
+      if (++this.airAge % 6 === 0) this.airSolids();
+      const dt = 0.5;
+      for (let sub = 0; sub < 2; sub++) {
+        // Wind blows from high pressure to low.
+        for (let y = 0; y < ah; y++) for (let x = 0; x < aw; x++) {
+          const i = y * aw + x; if (S[i]) { u[i] = v[i] = 0; continue; }
+          const pc = p[i];
+          const pl = x > 0 && !S[i - 1] ? p[i - 1] : pc, pr = x < aw - 1 && !S[i + 1] ? p[i + 1] : pc;
+          const pt = y === 0 ? 0 : !S[i - aw] ? p[i - aw] : pc;       // the sky above is open
+          const pb = y < ah - 1 && !S[i + aw] ? p[i + aw] : pc;
+          u[i] -= dt * (pr - pl) * 0.5; v[i] -= dt * (pb - pt) * 0.5;
+        }
+        // Air that piles up raises the pressure; air that leaves lowers it.
+        for (let y = 0; y < ah; y++) for (let x = 0; x < aw; x++) {
+          const i = y * aw + x; if (S[i]) { q[i] = 0; continue; }
+          const ul = x > 0 && !S[i - 1] ? u[i - 1] : 0, ur = x < aw - 1 && !S[i + 1] ? u[i + 1] : 0;
+          const vt = y === 0 ? v[i] : !S[i - aw] ? v[i - aw] : 0, vb = y < ah - 1 && !S[i + aw] ? v[i + aw] : 0;
+          let np = p[i] - dt * ((ur - ul) * 0.5 + (vb - vt) * 0.5);
+          // a touch of smoothing keeps it from going speckly
+          const nl = x > 0 && !S[i - 1] ? p[i - 1] : p[i], nr = x < aw - 1 && !S[i + 1] ? p[i + 1] : p[i];
+          const nt = y > 0 && !S[i - aw] ? p[i - aw] : p[i], nb = y < ah - 1 && !S[i + aw] ? p[i + aw] : p[i];
+          np = np * 0.9 + (nl + nr + nt + nb) * 0.025;
+          q[i] = np * 0.985;
+        }
+        const tmp = p; p = q; q = tmp;
+      }
+      this.ap = p; this.ap2 = q;
+      let energy = 0;
+      for (let i = 0; i < u.length; i++) { u[i] *= 0.975; v[i] *= 0.975; const e = Math.abs(p[i]) + Math.abs(u[i]) + Math.abs(v[i]); if (e > energy) energy = e; }
+      if (energy < 0.03) { u.fill(0); v.fill(0); p.fill(0); q.fill(0); this.airOn = false; return; }
+      this.windMoves();
+    }
+    windAt(x, y) { if (!this.airOn) return null; const ax = Math.min(this.aw - 1, Math.max(0, (x / this.A) | 0)), ay = Math.min(this.ah - 1, Math.max(0, (y / this.A) | 0)), i = ay * this.aw + ax; return [this.au[i], this.av[i]]; }
+    // The wind picks up whatever it's strong enough to lift.
+    windMoves() {
+      const A = this.A, aw = this.aw, w = this.w, h = this.h, t = this.t, fly = this.flying, u = this.au, v = this.av;
+      const open = (m) => m === 0 || KIND[m] === K.gas || KIND[m] === K.fire || KIND[m] === K.spark || KIND[m] === K.cloud;
+      for (let ay = this.ah - 1; ay >= 0; ay--) for (let ax = 0; ax < aw; ax++) {
+        let ai = ay * aw + ax;
+        if (this.asolid[ai] && ay > 0 && !this.asolid[ai - aw]) ai -= aw; // the top of the ground feels the air just above it
+        const raw = Math.sqrt(u[ai] * u[ai] + v[ai] * v[ai]);
+        if (raw < 0.3) continue;
+        const sp = Math.min(raw, 4), wu = u[ai] / raw * sp, wv = v[ai] / raw * sp; // even a huge blast tops out
+        // also feel the wind from the cell next door, so the edge of the ground gets hit
+        for (let y = Math.min(h, ay * A + A) - 1; y >= ay * A; y--) for (let x = ax * A; x < Math.min(w, ax * A + A); x++) {
+          const j = y * w + x, m = t[j]; if (!m || BOUNCE[m]) continue;
+          const k = KIND[m];
+          if (k === K.gas || k === K.fire && m !== M.ETERNAL) {
+            if (rnd() < sp * 1.5) { const nx = Math.round(x + wu * 3), ny = Math.round(y + wv * 3); if (nx >= 0 && ny >= 0 && nx < w && ny < h && t[ny * w + nx] === 0) this.swap(j, ny * w + nx); }
+            continue;
+          }
+          if (k !== K.powder && k !== K.liquid && k !== K.skypowder) continue;
+          // Only grains the air can actually reach (an open side) get picked up.
+          if (!((y > 0 && open(t[j - w])) || (x > 0 && open(t[j - 1])) || (x < w - 1 && open(t[j + 1])) || (y < h - 1 && open(t[j + w])))) continue;
+          const weight = DENS[m] * (k === K.liquid ? 1.6 : 1) * (STICKY[m] ? 3 : 1);
+          const need = 0.25 + weight * 0.18 + weight * weight * 0.03; // ash ~0.37, sand ~0.9, gold ~3.6 (only right by a big blast)
+          if (sp < need || rnd() > Math.min(0.7, (sp - need) / need)) continue;
+          if (fly.length > 4000) return;
+          const boost = 2.4 / (0.6 + weight * 0.25);      // light things are thrown faster
+          fly.push({ m, sk: this.hasSkins ? this.skin[j] : 0, l: this.life[j], s: this.shade[j], x, y,
+            vx: Math.max(-7, Math.min(7, wu * boost + (rnd() - 0.5) * 0.4)), vy: Math.max(-7, Math.min(6, wv * boost - 0.25 - rnd() * 0.3)), wt: weight });
+          t[j] = 0; this.skin[j] = 0; this.life[j] = 0;
+        }
+      }
+      // Creatures get blown about too.
+      for (const c of this.creatures) {
+        if (c.dead) continue;
+        const wd = this.windAt(c.x, c.y); const sp = Math.hypot(wd[0], wd[1]); if (sp < 0.6) continue;
+        const steps = Math.min(3, Math.ceil(sp * 2));
+        for (let s2 = 0; s2 < steps; s2++) {
+          const nx = c.x + wd[0] / sp, ny = c.y + wd[1] / sp * 0.6 - 0.2;
+          if (!this.canBe(c.k, this.cellAt(nx, ny))) break;
+          c.x = Math.max(1, Math.min(w - 2, nx)); c.y = Math.max(0, Math.min(h - 1, ny));
+        }
+      }
     }
     /* Move the thrown grains: gravity pulls them down, and they land on the first thing they hit. */
     stepFlying() {
@@ -1769,6 +1815,10 @@ svg .fill { fill: currentColor; stroke: none; }
       const open = (m) => m === 0 || KIND[m] === K.gas || KIND[m] === K.fire || KIND[m] === K.spark || KIND[m] === K.cloud;
       for (const p of list) {
         p.vy = Math.min(p.vy + 0.16, 6); p.vx *= 0.985;
+        if (this.airOn) { // grains in the air are carried along by the wind (light ones more)
+          const wd = this.windAt(p.x, p.y), k = 0.12 / (0.6 + (p.wt || 2) * 0.25), boost = 2.4 / (0.6 + (p.wt || 2) * 0.25), ws = Math.hypot(wd[0], wd[1]); if (ws > 4) { wd[0] *= 4 / ws; wd[1] *= 4 / ws; }
+          p.vx += (wd[0] * boost - p.vx) * k; p.vy += (wd[1] * boost - p.vy) * k; p.vx = Math.max(-7, Math.min(7, p.vx));
+        }
         const n = Math.max(1, Math.ceil(Math.max(Math.abs(p.vx), Math.abs(p.vy))));
         let landed = false;
         for (let k = 0; k < n; k++) {
@@ -1834,7 +1884,7 @@ svg .fill { fill: currentColor; stroke: none; }
         this.magnets = mg; this.hasSticky = sticky;
       }
       this.blastsNow = 0;
-      if (this.waves.length) this.stepWaves();
+      if (this.airOn) this.stepAir();
       if (this.flying.length) this.stepFlying();
       // Explosions queued by the last frame's chain reactions.
       if (this.pendingFrost && this.pendingFrost.length) {
@@ -3289,17 +3339,13 @@ svg .fill { fill: currentColor; stroke: none; }
           if (px[j] === 0 || (px[j] >>> 24) < a && t[j] === 0) px[j] = ((a << 24) | (cb << 16) | (cg << 8) | cr) >>> 0;
         }
       }
-      // Shock waves: a faint ring of light spreading out.
-      for (const wv of this.waves) {
-        const a = Math.round(40 + 120 * (wv.strength || 1)), col = ((a << 24) | (235 << 16) | (245 << 8) | 255) >>> 0;
-        for (let ring = 0; ring < 2; ring++) {
-          const rr = wv.r - ring * 1.2; if (rr < 1) continue;
-          const steps = Math.ceil(rr * 6.4);
-          for (let q = 0; q < steps; q++) {
-            const ang = q / steps * 6.2832, x = Math.round(wv.x + Math.cos(ang) * rr), y = Math.round(wv.y + Math.sin(ang) * rr);
-            if (x < 0 || y < 0 || x >= this.w || y >= this.h) continue;
-            const i = y * this.w + x; if (t[i] === 0 || KIND[t[i]] === K.gas) px[i] = ring ? ((((a >> 1) << 24) | (235 << 16) | (245 << 8) | 255) >>> 0) : col;
-          }
+      // The blast of air: a faint shimmer where the pressure is high.
+      if (this.airOn) {
+        const A = this.A, aw = this.aw, ww = this.w, hh = this.h;
+        for (let ay = 0; ay < this.ah; ay++) for (let ax = 0; ax < aw; ax++) {
+          const pr = this.ap[ay * aw + ax]; if (pr < 0.35) continue;
+          const a = Math.min(45, Math.round(pr * 12)), col = ((a << 24) | (255 << 16) | (240 << 8) | 225) >>> 0;
+          for (let y = ay * A; y < Math.min(hh, ay * A + A); y++) for (let x = ax * A; x < Math.min(ww, ax * A + A); x++) { const i = y * ww + x; if (t[i] === 0) px[i] = col; }
         }
       }
       // Grains flying through the air after an explosion.
