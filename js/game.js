@@ -1464,7 +1464,14 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   let nSlots = 2;
   try { nSlots = Math.max(2, Math.min(4, Number(localStorage.getItem('sandalchemy.brewn')) || 2)); } catch (e) { /* default */ }
   const used = () => slots.slice(0, nSlots);
+  let keepResult = false; // an invention finished while the Cauldron was closed: show it when it opens again
   function openBrew() {
+    // Still thinking, or an answer came back while it was closed: open it just as it was.
+    if (thinking || keepResult) {
+      keepResult = false;
+      resetSearch($('#ing-search')); renderIngredients(); renderSlots();
+      $('#brew').hidden = false; return;
+    }
     // Locked ingredients stay in place between brews; unlocked ones start fresh.
     for (let k = 0; k < 4; k++) if (!locks[k]) slots[k] = 0;
     $('#brew-result').innerHTML = '';
@@ -1737,6 +1744,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     }
     renderSlots();
     brew(true);
+    if ($('#brew').hidden) keepResult = true; // they closed the Cauldron while it was thinking
     if (!id) {
       const why = got.error === 'limit' ? 'The Cauldron spirit is resting for today (daily limit reached). It wakes up again at ' + new Date(new Date().setUTCHours(24, 0, 0, 0)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.' : got.error === 'gpucrash' ? 'Your phone\u2019s graphics chip crashed while the AI was thinking, so the on-device AI may not work on this phone. Online works on every device.'
         : got.error === 'gpu' ? (/compatible GPU/i.test(got.why || '') ? 'The browser has switched off the graphics chip after a crash. Close the browser completely (swipe it away) and open the game again.' : 'Couldn\u2019t start the AI on this device' + (got.why ? ' (' + String(got.why).slice(0, 140) + ')' : '') + '. The Debug log in Settings has the details.')
@@ -2341,7 +2349,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 13, update 41';
+  const GAME_VERSION = 'Oct 13, update 42';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();
