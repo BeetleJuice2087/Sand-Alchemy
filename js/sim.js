@@ -692,6 +692,7 @@
           this.stamp[i] = this.clock;
           return;
         }
+        if (KIND[b] === K.solid || PROOF[b]) break; // never pop out through a wall, ceiling or solid block
       }
       // Nowhere to go (buried in a crowd): it's simply lost in the blast.
     }
