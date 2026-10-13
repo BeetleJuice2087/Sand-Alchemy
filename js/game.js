@@ -83,7 +83,7 @@
     // (age keeps fires and growing trees going; memory is what a mirror copies).
     // Version 2 stores material, memory and paint as two bytes per cell (ids go past 255).
     return { v: 2, disc, unseen: [...unseen], hinted: [...hinted], revealed: [...revealed], favs, tool, brush, inv: inventions,
-      world: { w: world.w, h: world.h, t: pack16(world.exportT()), l: pack(world.life), f: pack16(world.fuel), p: world.hasTint ? pack16(world.tint) : undefined,
+      world: { w: world.w, h: world.h, zg: world.zeroG ? 1 : undefined, t: pack16(world.exportT()), l: pack(world.life), f: pack16(world.fuel), p: world.hasTint ? pack16(world.tint) : undefined,
         c: world.creatures.map((c) => [c.k, Math.round(c.x), Math.round(c.y), c.dir, c.into || 0, c.s === 5 ? 5 : 0, Math.min(c.age || 0, 99999)]) } };
   }
   function writeSave() {
@@ -111,6 +111,7 @@
       const sw = saved.world, w = sw.w | 0, h = sw.h | 0;
       if (w < 1 || h < 1 || w * h > 4e6) return null;
       const old = new World(w, h), wide = saved.v >= 2, un = wide ? unpack16 : unpack;
+      old.zeroG = !!sw.zg;
       un(sw.t, old.t, COUNT);
       for (let i = 0; i < old.t.length; i++) if (MATS[old.t[i]].reserved) old.t[i] = 0; // an invention that's gone
       try { if (sw.l) { unpack(sw.l, old.life, 256); old.hadLife = true; } if (sw.f) un(sw.f, old.fuel, 65536); if (sw.p) { un(sw.p, old.tint, COUNT); for (let i = 0; i < old.tint.length; i++) if (old.tint[i] && MATS[old.tint[i]].reserved) old.tint[i] = 0; old.hasTint = true; } } catch (e) { /* older saves: ages start fresh */ }
@@ -131,7 +132,7 @@
     const r = stage.getBoundingClientRect();
     cell = r.width < 700 ? 3 : Math.max(3, Math.round(r.width / 320));
     const w = Math.max(40, Math.floor(r.width / cell)), h = Math.max(40, Math.floor(r.height / cell));
-    if (world && world.w === w && world.h === h) return;
+    if (world && world.w === w && world.h === h) { layoutView(); return; }
     const next = new World(w, h);
     if (world) next.copyFrom(world);
     else {
@@ -155,13 +156,11 @@
     }
     next.onDiscover = discovered;
     world = next;
+    setZeroG(world.zeroG, true);
     canvas.width = w; canvas.height = h;
-    canvas.style.width = w * cell + 'px'; canvas.style.height = h * cell + 'px';
-    canvas.style.left = Math.floor((r.width - w * cell) / 2) + 'px';
-    canvas.style.top = Math.floor((r.height - h * cell) / 2) + 'px';
     image = ctx.createImageData(w, h);
     px = new Uint32Array(image.data.buffer);
-    sizeGlow(w, h);
+    sizeGlow(w, h); sizeHeat(); layoutView();
     renderPalette(); renderCount();
   }
 
@@ -268,11 +267,117 @@
     $('#brush-label').textContent = b.label;
   }
   $('#btn-brush').addEventListener('click', () => { brush = (brush + 1) % BRUSHES.length; syncBrush(); writeSaveSoon(); });
-  $('#btn-pause').addEventListener('click', () => {
-    paused = !paused;
+  function setPaused(v) {
+    paused = v;
     $('#btn-pause').classList.toggle('is-paused', paused);
     $('#btn-pause').setAttribute('aria-label', paused ? 'Play' : 'Pause');
+  }
+  $('#btn-pause').addEventListener('click', () => setPaused(!paused));
+
+  /* ---------------- World controls: speed, frame step, zero gravity ---------------- */
+  const SPEEDS = [0.25, 0.5, 1, 2, 4];
+  let speed = 1, stepAcc = 0;
+  function setSpeed(v) {
+    speed = v; stepAcc = 0;
+    document.querySelectorAll('#wp-speed button').forEach((b) => b.classList.toggle('on', Number(b.dataset.s) === v));
+    $('#world-btn-label').textContent = v === 0.25 ? '\u00bc\u00d7' : v === 0.5 ? '\u00bd\u00d7' : v + '\u00d7';
+    $('#world-btn').classList.toggle('fast', v !== 1);
+  }
+  function stepOnce() { if (!paused) setPaused(true); world.step(); playWorldSounds(); }
+  document.querySelectorAll('#wp-speed button').forEach((b) => b.addEventListener('click', () => setSpeed(Number(b.dataset.s))));
+  $('#wp-step').addEventListener('click', stepOnce);
+  $('#world-btn').addEventListener('click', (e) => {
+    e.stopPropagation(); const p = $('#world-panel'); p.hidden = !p.hidden; $('#world-btn').setAttribute('aria-expanded', String(!p.hidden));
   });
+  // Tapping the world (or anywhere else) tucks the panel away.
+  addEventListener('pointerdown', (e) => { const p = $('#world-panel'); if (!p.hidden && !p.contains(e.target) && !$('#world-btn').contains(e.target)) { p.hidden = true; $('#world-btn').setAttribute('aria-expanded', 'false'); } }, true);
+  setSpeed(1);
+  function setZeroG(v, quiet) {
+    world.zeroG = !!v; $('#wp-zerog').checked = world.zeroG; $('#world-btn-zg').hidden = !world.zeroG;
+    if (!quiet) { note(world.zeroG ? 'Zero gravity: everything floats' : 'Gravity is back'); writeSaveSoon(); }
+  }
+  $('#wp-zerog').addEventListener('change', (e) => setZeroG(e.target.checked));
+
+  /* ---------------- Zoom and pan ----------------
+     zoom 1 = the whole world fits the screen. Zoomed in, (ox, oy) is where the world's top-left
+     corner sits in the play area; it's kept so the world always fills the view (no empty edges). */
+  let zoom = 1, ox = 0, oy = 0;
+  const ZMAX = 8;
+  function dc() { return cell * zoom; } // the on-screen size of one cell
+  function layoutView() {
+    if (!world) return;
+    const r = stage.getBoundingClientRect(), W = world.w * dc(), H = world.h * dc();
+    if (zoom <= 1.001) { zoom = 1; ox = Math.floor((r.width - world.w * cell) / 2); oy = Math.floor((r.height - world.h * cell) / 2); }
+    else {
+      ox = W <= r.width ? (r.width - W) / 2 : Math.min(0, Math.max(r.width - W, ox));
+      oy = H <= r.height ? (r.height - H) / 2 : Math.min(0, Math.max(r.height - H, oy));
+    }
+    const Wd = world.w * dc(), Hd = world.h * dc();
+    [canvas, glowCv].forEach((el) => { el.style.width = Wd + 'px'; el.style.height = Hd + 'px'; el.style.left = ox + 'px'; el.style.top = oy + 'px'; });
+    const TBc = window.SandSim.TB * dc();
+    heatCv.style.width = world.tw * TBc + 'px'; heatCv.style.height = world.th * TBc + 'px'; heatCv.style.left = ox + 'px'; heatCv.style.top = oy + 'px';
+    const zl = zoom.toFixed(1).replace(/\.0$/, '') + '\u00d7';
+    $('#wp-zfit').textContent = zoom > 1.001 ? 'Fit (' + zl + ')' : 'Fit';
+    $('#world-btn-zoom').hidden = zoom <= 1.001; $('#world-btn-zoom').textContent = '\u2315 ' + zl;
+    ring.hidden = true; if (typeof hideLoupe === 'function') hideLoupe();
+  }
+  // Zoom so that the point (sx, sy) in the play area stays under the finger / cursor.
+  function zoomAt(z, sx, sy) {
+    z = Math.max(1, Math.min(ZMAX, z));
+    const u = (sx - ox) / dc(), v = (sy - oy) / dc();
+    zoom = z; ox = sx - u * dc(); oy = sy - v * dc(); layoutView();
+  }
+  function zoomCentre(f) { const r = stage.getBoundingClientRect(); zoomAt(zoom * f, r.width / 2, r.height / 2); }
+  function panBy(dx, dy) { if (zoom <= 1.001) return; ox += dx; oy += dy; layoutView(); }
+  $('#wp-zin').addEventListener('click', () => zoomCentre(1.5));
+  $('#wp-zout').addEventListener('click', () => zoomCentre(1 / 1.5));
+  $('#wp-zfit').addEventListener('click', () => { zoom = 1; layoutView(); });
+  const stagePt = (e) => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  // Mouse wheel / trackpad: pinch (or Ctrl + scroll) zooms; two-finger scrolling pans when zoomed in.
+  stage.addEventListener('wheel', (e) => {
+    if (e.target.closest && e.target.closest('.world-panel')) return;
+    const [sx, sy] = stagePt(e);
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomAt(zoom * Math.exp(-Math.max(-60, Math.min(60, e.deltaY)) * 0.006), sx, sy); }
+    else if (zoom > 1.001) { e.preventDefault(); panBy(-e.deltaX, -e.deltaY); }
+  }, { passive: false });
+  // Safari on the Mac sends trackpad pinches as gesture events.
+  let gz = 1;
+  stage.addEventListener('gesturestart', (e) => { e.preventDefault(); gz = zoom; });
+  stage.addEventListener('gesturechange', (e) => { e.preventDefault(); const [sx, sy] = stagePt(e); zoomAt(gz * e.scale, sx, sy); });
+  // Two fingers on a touch screen: pinch to zoom, drag to pan. A stroke the first finger just started is undone.
+  const touches = new Map(); let pinch = null, pinchLock = false;
+  const two = () => { const [a, b] = [...touches.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch' || e.target !== canvas) return;
+    const [x, y] = stagePt(e); touches.set(e.pointerId, { x, y, t: performance.now() });
+    if (touches.size === 2) {
+      // Undo whatever the first finger just started (it was the start of a pinch, not a stroke).
+      const first = [...touches.values()][0];
+      if (drawing || portalDrag || dropping || line) {
+        drawing = false; portalDrag = false; dropping = false; ghost.hidden = true; ring.hidden = true; hideLoupe(); if (line) endLine(false);
+        if (performance.now() - first.t < 600 && undoStack.length) { const sn = undoStack.pop(); world.t.set(sn.t); world.life.set(sn.l); world.fuel.set(sn.f); world.creatures = sn.c; $('#btn-undo').disabled = !undoStack.length; }
+      }
+      const g = two(); pinch = { d: g.d, x: g.x, y: g.y, z: zoom, ox, oy }; pinchLock = true;
+      e.stopImmediatePropagation(); e.preventDefault();
+    } else if (pinchLock) { e.stopImmediatePropagation(); e.preventDefault(); }
+  }, true);
+  stage.addEventListener('pointermove', (e) => {
+    if (!touches.has(e.pointerId)) return;
+    const [x, y] = stagePt(e); const p = touches.get(e.pointerId); p.x = x; p.y = y;
+    if (pinch && touches.size >= 2) {
+      const g = two(), z = Math.max(1, Math.min(ZMAX, pinch.z * g.d / pinch.d));
+      const u = (pinch.x - pinch.ox) / (cell * pinch.z), v = (pinch.y - pinch.oy) / (cell * pinch.z); // the spot under the fingers when the pinch began
+      zoom = z; ox = g.x - u * dc(); oy = g.y - v * dc(); layoutView();
+      e.stopImmediatePropagation(); e.preventDefault();
+    } else if (pinchLock) { e.stopImmediatePropagation(); e.preventDefault(); }
+  }, true);
+  const lift = (e) => {
+    if (!touches.has(e.pointerId)) return;
+    touches.delete(e.pointerId);
+    if (touches.size < 2) pinch = null;
+    if (pinchLock) { e.stopImmediatePropagation(); if (!touches.size) { pinchLock = false; writeSaveSoon(); } }
+  };
+  stage.addEventListener('pointerup', lift, true); stage.addEventListener('pointercancel', lift, true);
   // Tap the trash can to clear everything; press and hold it to pick one element to remove.
   const trash = $('#btn-clear');
   let holdTimer = 0, held = false;
@@ -426,7 +531,7 @@
     if (world.au) { world.au.fill(0); world.av.fill(0); world.ap.fill(0); world.ap2.fill(0); world.airOn = false; }
     if (sw.home) old.stickHome = sw.home;
     old.discovered.set(world.discovered); // loading never changes what you've discovered
-    world.copyFrom(old);
+    world.copyFrom(old); setZeroG(world.zeroG, true);
     world.bhStore = [];
     const ok = (m) => Number.isInteger(m) && m >= 0 && m < COUNT && !(m && MATS[m].reserved);
     if (Array.isArray(sw.bh)) for (let k = 0; k + 1 < sw.bh.length; k += 2) if (sw.bh[k] && ok(sw.bh[k]) && ok(sw.bh[k + 1])) world.bhStore.push(sw.bh[k], sw.bh[k + 1]); // (material, skin) pairs
@@ -507,7 +612,7 @@
   // The toolbar's Search button: type a name, tap the result to start painting with it.
   function openFind() {
     const g = $('#find-grid'); g.innerHTML = '';
-    [{ label: '\u2605 Favorites', items: favItems() }].concat(GROUPS).forEach((grp) => {
+    [{ label: '\u2605 Favorites', items: favItems() }].concat(shelfGroups()).forEach((grp) => {
       const items = grp.items.filter((m) => world.discovered[m]);
       if (!items.length) return;
       g.append(groupLabel(grp.label, 'ing-section'));
@@ -545,8 +650,11 @@
     $('#book-count').textContent = `${n} found`;
     const g = $('#book-grid'); g.innerHTML = '';
     const bookOrder = [];
-    GROUPS.forEach((grp) => { (grp.label === 'Crafted' ? [M.CAULDRON].concat(grp.items) : grp.items).forEach((m) => bookOrder.push([m, grp.label])); });
-    bookOrder.forEach(([m, label], k) => {
+    GROUPS.forEach((grp) => {
+      if (grp === INV_GROUP) { invShelves(grp.items).forEach((sh) => sh.items.forEach((m) => bookOrder.push([m, grp.label, sh.label]))); return; }
+      (grp.label === 'Crafted' ? [M.CAULDRON].concat(grp.items) : grp.items).forEach((m) => bookOrder.push([m, grp.label]));
+    });
+    bookOrder.forEach(([m, label, shelf], k) => {
       if (k === 0 || bookOrder[k - 1][1] !== label) {
         const hd = groupLabel(label, 'book-section');
         const note = { Basics: 'What every world starts with', Elements: 'Found by making things happen in your world',
@@ -557,6 +665,12 @@
           Inventions: 'Dreamed up by the Cauldron spirit (AI). Mix them again to invent even more' }[label];
         const sm = document.createElement('small'); sm.textContent = note; hd.append(sm);
         g.append(hd);
+      }
+      if (shelf && (k === 0 || bookOrder[k - 1][2] !== shelf)) { // a themed shelf inside Inventions
+        const sh = document.createElement('h4'); sh.className = 'book-shelf';
+        const n = bookOrder.filter((e) => e[2] === shelf).length;
+        sh.textContent = shelf; const c = document.createElement('span'); c.textContent = n; sh.append(c);
+        g.append(sh);
       }
       const mat = MATS[m], found = world.discovered[m];
       const c = document.createElement('div'), shown = !found && revealed.has(m);
@@ -661,6 +775,45 @@
   const aiReady = () => aiSettings.on && (aiSettings.mode === 'device' ? hasGPU() : /^(https:\/\/[^\s]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$/.test(aiUrl()));
   const INV_GROUP = { label: 'Inventions', items: [] };
   GROUPS.push(INV_GROUP);
+  /* Inventions are sorted into themed shelves by what they're called, what they do and what they act like.
+     The name counts most, then the effects and the element it acts like, then the description. */
+  const INV_CATS = [
+    ['Creatures', null],
+    ['Explosive', /\b(bomb|boom|blast|explo\w*|nitro|tnt|dynamite|detonat\w*|kaboom|firework\w*|c4|gunpowder|grenade\w*)\b/],
+    ['Fire & Heat', /\b(fire|flame\w*|blaze|burn\w*|ember\w*|lava|magma\w*|heat\w*|hot|inferno|pyro\w*|scorch\w*|solar|sun\w*|smoke|ash|molten|melt\w*|charcoal|coal|candle|torch|wax)\b/],
+    ['Ice & Frost', /\b(ice|icy|frost\w*|snow\w*|cold|freez\w*|frozen|glaci\w*|chill\w*|winter|blizzard|polar|arctic|sleet|hail)\b/],
+    ['Storm & Electric', /\b(lightning|thunder\w*|volt\w*|spark\w*|zap\w*|electr\w*|shock\w*|storm\w*|static|plasma|charge\w*|tesla|bolt)\b/],
+    ['Water & Liquids', /\b(water|sea|ocean|tide\w*|tidal|aqua\w*|rain\w*|bubbl\w*|wave\w*|swamp|mud\w*|slime|goo|liquid|fountain|ink|puddle|pond|soap|steam|mist|fog|cloud\w*|mire|marsh|wet|sludge|toxic|acid\w*|poison\w*|oil|dew\w*)\b/],
+    ['Plants & Nature', /\b(plant\w*|seed\w*|flower\w*|bloom\w*|tree\w*|moss\w*|vine\w*|leaf|leaves|petal\w*|root\w*|mushroom\w*|fung\w*|coral|garden|grow\w*|pollen|blossom\w*|sprout\w*|bio\w*|lum\w*|grass|herb\w*|weed\w*|wood\w*|forest|nature)\b/],
+    ['Sweets', /\b(candy|sugar\w*|sweet\w*|chocolate|choco|honey\w*|hive|caramel|cake|gingerbread|cotton|syrup|jelly|cookie|toffee|lollipop|cupcake|frosting)\b/],
+    ['Earth & Crystal', /\b(stone\w*|rock\w*|sand\w*|crystal\w*|gem\w*|dust|metal\w*|iron|gold\w*|geode|clay|dirt|obsidian|glass|diamond|pebble\w*|quartz|ore|mineral\w*|boulder|earth|granite|steel|copper)\b/],
+    ['Magic & Space', /\b(magic\w*|star\w*|fairy|fairies|spirit\w*|ghost\w*|aurora|rainbow\w*|glow\w*|light\w*|cosmic|nebula|void|galax\w*|moon\w*|mystic\w*|wish\w*|potion\w*|essence|enchant\w*|arcane|shadow\w*|dark\w*|sparkl\w*|shimmer\w*|wormhole|portal|teleport\w*|astral|celestial|comet|meteor\w*)\b/],
+    ['Odds & Ends', null],
+  ];
+  const invCatCache = new Map();
+  function invCategory(m) {
+    if (invCatCache.has(m)) return invCatCache.get(m);
+    const mat = MATS[m]; let best = 'Odds & Ends';
+    if (mat.creature) best = 'Creatures';
+    else {
+      const lower = (t) => String(t || '').toLowerCase();
+      const parts = [[lower(mat.name), 4], [lower(mat.fxText), 2], [mat.like ? lower(MATS[mat.like].name) : '', 2], [lower(mat.desc), 1]];
+      let top = 0;
+      INV_CATS.forEach(([label, re]) => {
+        if (!re) return;
+        let score = 0;
+        parts.forEach(([text, w]) => { const hits = text.match(new RegExp(re.source, 'g')); if (hits) score += w * hits.length; });
+        if (score > top) { top = score; best = label; } // ties keep the earlier shelf
+      });
+    }
+    invCatCache.set(m, best); return best;
+  }
+  // The inventions split into their shelves, in shelf order (empty shelves left out).
+  function invShelves(items) {
+    return INV_CATS.map(([label]) => ({ label, items: items.filter((m) => invCategory(m) === label) })).filter((g) => g.items.length);
+  }
+  // GROUPS, with Inventions split into its shelves (for the Cauldron and Search lists).
+  const shelfGroups = () => GROUPS.flatMap((g) => (g === INV_GROUP ? invShelves(g.items).map((s) => ({ label: '\u2728 ' + s.label, items: s.items })) : [g]));
 
   const BAD_WORDS = /\b(ass|arse|bitch|bastard|crap|damn|dick|fuck|shit|piss|cock|cunt|slut|whore|nazi|porn|sex|kill|murder|gun|drug|weed|beer|wine|vodka|blood|gore)\w*/i;
   const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg', 'paddle', 'amphibian'];
@@ -1090,6 +1243,7 @@
       if (parts) MULTI.delete(multiKey(parts)); else { MAGIC[a * COUNT + b] = 0; MAGIC[b * COUNT + a] = 0; }
       return id;
     }
+    invCatCache.delete(id);
     if (!INV_GROUP.items.includes(id)) INV_GROUP.items.push(id);
     INV_GROUP.items.sort(byName);
     return id;
@@ -1489,7 +1643,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   document.querySelectorAll('.count-btn').forEach((b) => b.addEventListener('click', () => { if (!thinking) setCount(Number(b.dataset.n)); }));
   function renderIngredients() {
     const g = $('#ing-grid'); g.innerHTML = '';
-    GROUPS.forEach((grp) => {
+    shelfGroups().forEach((grp) => {
       const items = grp.items.filter((m) => world.discovered[m]);
       if (items.length) g.append(groupLabel(grp.label, 'ing-section'));
       items.forEach((m) => addIngredient(g, m));
@@ -1909,17 +2063,17 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   let drawing = false, lastX = 0, lastY = 0, curX = 0, curY = 0, boltWait = 0;
   function toCell(e) {
     const r = canvas.getBoundingClientRect();
-    return [Math.floor((e.clientX - r.left) / cell), Math.floor((e.clientY - r.top) / cell)];
+    return [Math.floor((e.clientX - r.left) / dc()), Math.floor((e.clientY - r.top) / dc())];
   }
   // A ring shows exactly where the eraser will clear.
   const ring = $('#erase-ring');
   function moveRing(e, show) {
     if (tool !== ERASE || !show) { ring.hidden = true; return; }
     const r = canvas.getBoundingClientRect(), s = stage.getBoundingClientRect();
-    const [cx, cy] = toCell(e), d = (BRUSHES[brush].r * 2 + 1) * cell;
+    const [cx, cy] = toCell(e), d = (BRUSHES[brush].r * 2 + 1) * dc();
     ring.style.width = ring.style.height = d + 'px';
-    ring.style.left = (r.left - s.left + (cx + 0.5) * cell) + 'px';
-    ring.style.top = (r.top - s.top + (cy + 0.5) * cell) + 'px';
+    ring.style.left = (r.left - s.left + (cx + 0.5) * dc()) + 'px';
+    ring.style.top = (r.top - s.top + (cy + 0.5) * dc()) + 'px';
     ring.hidden = false;
   }
   /* ---------------- Portals: a ghost outline, and R (or the button) to turn them sideways ----------------
@@ -1944,8 +2098,8 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (!isPortal() || !show) { ghost.hidden = true; return; }
     const r = canvas.getBoundingClientRect(), s = stage.getBoundingClientRect(), [cx, cy] = toCell(e), b = portalBox(cx, cy);
     ghost.classList.toggle('out', tool === M.PORTALOUT);
-    ghost.style.left = (r.left - s.left + b.x0 * cell) + 'px'; ghost.style.top = (r.top - s.top + b.y0 * cell) + 'px';
-    ghost.style.width = (b.w * cell) + 'px'; ghost.style.height = (b.h * cell) + 'px';
+    ghost.style.left = (r.left - s.left + b.x0 * dc()) + 'px'; ghost.style.top = (r.top - s.top + b.y0 * dc()) + 'px';
+    ghost.style.width = (b.w * dc()) + 'px'; ghost.style.height = (b.h * dc()) + 'px';
     ghost.hidden = false; showGhost.last = e;
   }
   function rotatePortal() {
@@ -2030,14 +2184,14 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     const r = canvas.getBoundingClientRect(), st = stage.getBoundingClientRect();
     lineSvg.style.left = (r.left - st.left) + 'px'; lineSvg.style.top = (r.top - st.top) + 'px';
     lineSvg.setAttribute('width', r.width); lineSvg.setAttribute('height', r.height);
-    const c = (v) => (v + 0.5) * cell, sw = (BRUSHES[brush].r * 2 + 1) * cell;
+    const c = (v) => (v + 0.5) * dc(), sw = (BRUSHES[brush].r * 2 + 1) * dc();
     [lineEl, lineMid].forEach((l) => { l.setAttribute('x1', c(line.x0)); l.setAttribute('y1', c(line.y0)); l.setAttribute('x2', c(line.x1)); l.setAttribute('y2', c(line.y1)); });
     lineEl.setAttribute('stroke-width', sw);
     lineEl.setAttribute('stroke', tool === ERASE ? 'rgba(255,255,255,0.25)' : MATS[tool].colors[0]);
     lineSvg.removeAttribute('hidden');
   }
   function startLine(e) {
-    canvas.setPointerCapture(e.pointerId);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
     const [x, y] = toCell(e);
     line = { x0: x, y0: y, x1: x, y1: y };
     ring.hidden = true; $('#tip').classList.add('gone'); $('#current').classList.add('lining');
@@ -2050,7 +2204,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   }
   /* Keyboard shortcuts:  C eraser · E dropper · B brew · F search · Space pause
      · Ctrl/Cmd+Z undo · Esc closes a panel (or cancels a line). */
-  const PANELS = ['#worlds', '#erase-confirm', '#settings', '#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
+  const PANELS = ['#world-panel', '#worlds', '#erase-confirm', '#settings', '#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
   let toolBefore = M.SAND;
   function toggleTool(m) {
     if (tool === m) pick(toolBefore !== m ? toolBefore : M.SAND);
@@ -2103,6 +2257,14 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (PANELS.some((sel) => !$(sel).hidden)) return; // shortcuts only in the world view
     switch (e.key.toLowerCase()) {
       case 'c': toggleTool(ERASE); break;
+      case '[': setSpeed(SPEEDS[Math.max(0, SPEEDS.indexOf(speed) - 1)]); note('Speed ' + $('#world-btn-label').textContent); break;
+      case ']': setSpeed(SPEEDS[Math.min(SPEEDS.length - 1, SPEEDS.indexOf(speed) + 1)]); note('Speed ' + $('#world-btn-label').textContent); break;
+      case '.': stepOnce(); break;
+      case 'g': setZeroG(!world.zeroG); break;
+      case 't': setThermal(!thermal); break;
+      case '=': case '+': zoomCentre(1.5); break;
+      case '-': case '_': zoomCentre(1 / 1.5); break;
+      case '0': zoom = 1; layoutView(); break;
       case 'm': SND.set(!SND.on, SND.vol); $('#snd-on').checked = SND.on; if (!SND.on) SND.ambient(null); note(SND.on ? 'Sound on' : 'Sound off'); break;
       case 'e': toggleTool(DROPPER); break;
       case 'b': openBrew(); break;
@@ -2123,12 +2285,12 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       portalDrag = true; showGhost(e, true); return;
     }
     if (tool === DROPPER) {
-      e.preventDefault(); canvas.setPointerCapture(e.pointerId);
+      e.preventDefault(); try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
       $('#tip').classList.add('gone'); dropping = true; showLoupe(e); return;
     }
     moveRing(e, true);
     e.preventDefault();
-    canvas.setPointerCapture(e.pointerId);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
     drawing = true; [curX, curY] = toCell(e); lastX = curX; lastY = curY; boltWait = 0; petX = petY = -99;
     $('#tip').classList.add('gone');
     paintLine(lastX, lastY, curX, curY);
@@ -2214,6 +2376,35 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     }
   }
 
+  /* ---------------- Heat view ----------------
+     The temperature of each 4x4 block, tinted over the world: blue is cold, clear is room
+     temperature, and orange, red, yellow and white get hotter and hotter. */
+  const heatCv = $('#heat'), hctx = heatCv.getContext('2d');
+  let thermal = false, hImg = null, hPx = null;
+  function sizeHeat() {
+    heatCv.width = world.tw; heatCv.height = world.th;
+    hImg = hctx.createImageData(world.tw, world.th); hPx = new Uint32Array(hImg.data.buffer);
+  }
+  function heatColour(v) {
+    let r, g, b, a;
+    if (v < 20) { const k = Math.min(1, (20 - v) / 120); r = 60 - 40 * k; g = 160 - 60 * k; b = 255; a = 0.15 + 0.6 * k; if (v > 12) a *= (20 - v) / 8; }
+    else if (v < 200) { const k = (v - 20) / 180; r = 255; g = 170 - 60 * k; b = 40; a = 0.12 + 0.45 * k; if (v < 28) a *= (v - 20) / 8; }
+    else if (v < 1000) { const k = (v - 200) / 800; r = 255; g = 110 - 80 * k; b = 30; a = 0.6 + 0.2 * k; }
+    else { const k = Math.min(1, (v - 1000) / 2000); r = 255; g = 220 + 35 * k; b = 90 + 165 * k; a = 0.85; }
+    return ((Math.round(a * 255) << 24) | (Math.round(b) << 16) | (Math.round(g) << 8) | Math.round(r)) >>> 0;
+  }
+  function drawHeat() {
+    if (!thermal) return;
+    const T = world.temp; if (!T || !hPx || hPx.length !== T.length) { sizeHeat(); }
+    for (let b = 0; b < T.length; b++) hPx[b] = heatColour(T[b]);
+    hctx.putImageData(hImg, 0, 0);
+  }
+  function setThermal(v) {
+    thermal = !!v; heatCv.hidden = !thermal; $('#wp-thermal').checked = thermal; $('#world-btn-heat').hidden = !thermal;
+    if (thermal) drawHeat();
+  }
+  $('#wp-thermal').addEventListener('change', (e) => setThermal(e.target.checked));
+
   /* ---------------- Glow (bloom) ----------------
      Everything that gives off light (lava, fire, lightning, glowing inventions,
      red-hot rock) is gathered at half size, blurred, and laid over the world
@@ -2225,7 +2416,6 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   function sizeGlow(w, h) {
     bw = Math.ceil(w / BD); bh = Math.ceil(h / BD);
     glowCv.width = bw; glowCv.height = bh;
-    ['width', 'height', 'left', 'top'].forEach((k) => { glowCv.style[k] = canvas.style[k]; });
     gA = [0, 1, 2].map(() => new Float32Array(bw * bh)); gB = [0, 1, 2].map(() => new Float32Array(bw * bh));
     gImg = gctx.createImageData(bw, bh); gPx = new Uint32Array(gImg.data.buffer); glowShown = false;
   }
@@ -2416,7 +2606,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   document.addEventListener('visibilitychange', () => SND.sleep(document.hidden));
   document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('button') && !e.target.closest('#brew-go')) SND.click(); }, true);
   // A few times a second, see what's on screen and set the ambient sounds to match.
-  let lastSteam = 0, quietNow = false;
+  let lastSteam = 0, quietNow = false, frameTick = 0;
   function sampleAmbient() {
     if (!SND.on || !SND.amb) return;
     const t = world.t, st = world.stamp, ck = world.clock, n = t.length;
@@ -2462,11 +2652,17 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       if (k === K.powder || k === K.liquid || k === K.gas || k === K.fire || k === K.cloud || k === K.float || k === K.skypowder || baseOf(tool) === M.LIGHTNING) dab(curX, curY);
     }
     if ((world.frame & 7) === 0 || padShown) updateStickPad();
-    if (!paused) { world.step(); playWorldSounds(); if ((world.frame & 7) === 0) sampleAmbient(); quietNow = false; }
-    else if (!quietNow) { quietNow = true; SND.ambient(null); } // paused: the world goes quiet
+    if (!paused) {
+      // Slow motion steps the world every few frames; fast forward steps it several times a frame.
+      stepAcc += speed;
+      for (let n = 0; stepAcc >= 1 && n < 4; n++, stepAcc--) { world.step(); playWorldSounds(); }
+      if ((++frameTick & 7) === 0) sampleAmbient();
+      quietNow = false;
+    } else if (!quietNow) { quietNow = true; SND.ambient(null); } // paused: the world goes quiet
     world.render(px);
     ctx.putImageData(image, 0, 0);
     drawGlow();
+    if (thermal && (frameTick & 3) === 0) drawHeat();
     if (loupeAt) drawLoupe();
     requestAnimationFrame(frame);
   }
@@ -2538,7 +2734,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 13, update 46';
+  const GAME_VERSION = 'Oct 13, update 49';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave, sound: SND };
 })();

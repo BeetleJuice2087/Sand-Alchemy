@@ -95,6 +95,12 @@
   // What lava (or melted gold) hardens into stays red-hot for a while, then cools down.
   const LAVA_GLOW = ((255 << 24) | (8 << 16) | (45 << 8) | 255) >>> 0; // lava lights things up red-orange
   const COOLS = new Uint8Array(COUNT); [M.STONE, M.OBSIDIAN, M.PUMICE, M.METAL, M.GOLD, M.GLASS].forEach((m) => { COOLS[m] = 1; });
+  /* Temperature (°C) that a material holds its surroundings at. NaN = it just takes on the heat around it. */
+  const TEMP = new Float32Array(COUNT).fill(NaN);
+  [[M.FIRE, 700], [M.ETERNAL, 700], [M.EMBER, 600], [M.LAVA, 1100], [M.MOLTENGOLD, 1100], [M.PLASMA, 3000],
+    [M.HEATCRYSTAL, 250], [M.STEAM, 105], [M.COLDFIRE, -60], [M.ICE, -10], [M.SNOW, -8], [M.FROSTCRYSTAL, -40],
+    [M.DRYICE, -78], [M.LN2, -196]].forEach(([m, v]) => { TEMP[m] = v; });
+  const ROOM = 20, TB = 4; // room temperature, and heat is tracked in blocks of 4x4 cells
   const COLD = new Uint8Array(COUNT); [M.ICE, M.SNOW, M.FROSTCRYSTAL, M.COLDFIRE, M.DRYICE, M.LN2].forEach((m) => { COLD[m] = 1; });
   function buildProps(mt) {
     const m = mt.id;
@@ -159,6 +165,10 @@
       this.flying = [];         // grains thrown by explosions, flying through the air
       this.airOn = false;       // the air simulation sleeps until something stirs it
       this.blastsNow = 0;       // explosions this frame: a chain reaction throws things harder
+      this.zeroG = false;       // zero gravity: grains and liquids float, only holes pull
+      this.tw = Math.ceil(w / TB); this.th = Math.ceil(h / TB);
+      this.temp = new Float32Array(this.tw * this.th).fill(ROOM); // temperature of each 4x4 block
+      this.tempNext = new Float32Array(this.tw * this.th); this.tSum = new Float32Array(this.tw * this.th); this.tN = new Uint16Array(this.tw * this.th); this.tFull = new Uint16Array(this.tw * this.th);
       this.sfx = { boom: 0, boomX: 0.5, booms: 0, bolt: 0, boltX: 0.5, portal: 0, gulp: 0 }; // what happened this frame, for sound effects
       this.creatures = [];
       this.magnets = []; this.hasSticky = false; this.hasBouncy = false;
@@ -633,6 +643,7 @@
       const H = this.holes, bh = H ? H.bhC : null, wh = H ? H.whC : null;
       flight: for (const p of list) {
         if (p.zg > 0) p.zg--; // spat out of a white hole: floats like space dust for a while
+        else if (this.zeroG) { p.vx *= 0.998; p.vy *= 0.998; } // drifting through space
         else { p.vy = Math.min(p.vy + 0.16, p.pz ? 9 : 6); p.vx *= 0.985; } // portal loops can go faster
         if (H) { // gravity: black holes pull grains in (they curve and orbit), white holes push them away
           for (const b of bh) { // pull grows with the hole's size
@@ -972,6 +983,71 @@
       }
     }
 
+    /* Temperature, every 4th frame: hot and cold things set their block's temperature, heat spreads to
+       the blocks around it and slowly settles back to room temperature, and things react to the heat:
+       ice melts, water boils or freezes, burnable things catch fire, and rock near lava glows. */
+    stepHeat() {
+      const w = this.w, h = this.h, t = this.t, tw = this.tw, th = this.th, T = this.temp, N = this.tempNext;
+      const sum = this.tSum, cnt = this.tN, full = this.tFull; sum.fill(0); cnt.fill(0); full.fill(0);
+      const fuel = this.fuel, skins = this.hasSkins ? this.skin : null;
+      for (let y = 0; y < h; y++) {
+        const by = ((y / TB) | 0) * tw;
+        for (let x = 0; x < w; x++) {
+          const m = t[y * w + x]; if (!m) continue;
+          const b = by + ((x / TB) | 0); full[b]++;
+          let v = TEMP[m];
+          if (m === M.THERMITE && fuel[y * w + x]) v = 2500;
+          if (skins) { const sk = skins[y * w + x]; if (sk && FX[sk]) { if (FX[sk].frost) v = -30; else if (FX[sk].burn && v !== v) v = 450; } }
+          if (v === v) { sum[b] += v; cnt[b]++; }
+        }
+      }
+      for (let b = 0; b < tw * th; b++) {
+        let v = T[b];
+        if (cnt[b]) { const target = sum[b] / cnt[b], k = Math.min(1, (cnt[b] / (TB * TB)) * 1.6); v += (target - v) * k; }
+        T[b] = v;
+      }
+      // Spread to the neighbours, and drift back towards room temperature (air loses heat faster than solid ground).
+      for (let by = 0; by < th; by++) for (let bx = 0; bx < tw; bx++) {
+        const b = by * tw + bx, v = T[b];
+        const l = bx > 0 ? T[b - 1] : v, r = bx < tw - 1 ? T[b + 1] : v, u = by > 0 ? T[b - tw] : v, d = by < th - 1 ? T[b + tw] : v;
+        let n = v + ((l + r + u + d) * 0.25 - v) * 0.22;
+        n += (ROOM - n) * (full[b] > 8 ? 0.004 : 0.02);
+        N[b] = n;
+      }
+      T.set(N);
+      // Reactions to heat and cold.
+      const life = this.life, heat = this.heat;
+      for (let y = 0; y < h; y++) {
+        const by = ((y / TB) | 0) * tw;
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x, m = t[i]; if (!m) continue;
+          const v = T[by + ((x / TB) | 0)];
+          if (m !== M.STEAM && v > -15 && v < 25) continue; // nothing reacts at everyday temperatures
+          if (m === M.ICE || m === M.SNOW) { if (v > 25 && rnd() < Math.min(0.15, (v - 25) / 500)) this.put(i, M.WATER); continue; }
+          if (m === M.WATER || m === M.SEAWATER) {
+            if (v > 100 && rnd() < Math.min(0.25, (v - 100) / 800)) { this.put(i, M.STEAM); continue; }
+            if (v < -12 && rnd() < Math.min(0.08, (-12 - v) / 120)) this.put(i, M.ICE);
+            continue;
+          }
+          if (m === M.STEAM) { if (v < 50 && rnd() < 0.004) this.put(i, M.WATER); continue; }
+          if (FLAM[m] > 0) { if (v > 250 && rnd() < FLAM[m] * Math.min(1, (v - 250) / 500) * 0.25) this.ignite(i); continue; }
+          if (m === M.WAX && v > 60 && rnd() < 0.05) { this.put(i, M.MELTWAX); continue; }
+          if (m === M.CHOCOLATE && v > 45 && rnd() < 0.05) { this.put(i, M.MELTCHOC); continue; }
+          if (COOLS[m]) {
+            if (v > 1400 && (m === M.STONE || m === M.OBSIDIAN || m === M.METAL) && rnd() < 0.03) { this.put(i, M.LAVA); continue; } // only white-hot things melt rock
+            if (v > 1300 && m === M.SAND && rnd() < 0.03) { this.put(i, M.GLASS); continue; }
+            if (v > 380) { const g = Math.min(200, (v - 380) * 0.35) | 0; if (heat[i] < g) heat[i] = g; } // glowing hot from the heat around it
+          }
+        }
+      }
+      // Creatures get hurt in fierce heat.
+      for (const c of this.creatures) {
+        if (c.dead || c.k === M.STICKMAN && c.s === 9) continue;
+        const bx = Math.max(0, Math.min(tw - 1, (c.x / TB) | 0)), byy = Math.max(0, Math.min(th - 1, (c.y / TB) | 0));
+        if (T[byy * tw + bx] > 300 && rnd() < 0.15 && !(ABIL[c.k] && ABIL[c.k].fireproof)) this.hurtCreatures(c.x, c.y, 1, 'burn');
+      }
+    }
+    tempAt(x, y) { const bx = Math.max(0, Math.min(this.tw - 1, (x / TB) | 0)), by = Math.max(0, Math.min(this.th - 1, (y / TB) | 0)); return this.temp[by * this.tw + bx]; }
     step() {
       const w = this.w, h = this.h, t = this.t, life = this.life, stamp = this.stamp;
       this.clock = this.clock === 255 ? 1 : this.clock + 1;
@@ -997,6 +1073,7 @@
         this.holes = H.bhN || H.whN || H.vacN ? H : null; this.portOut = outs;
       }
       this.blastsNow = 0;
+      if ((this.frame & 3) === 0) this.stepHeat();
       if (this.airOn) this.stepAir();
       if (this.holes) this.forces();
       if (this.flying.length) this.stepFlying();
@@ -1076,6 +1153,7 @@
       if (m === M.GRAVBOMB && this.fuel[i]) return; // stuck fast
       if (ATTRACT[m] && this.magnets.length && this.pull(i, x, y)) return;
       if (this.hasSticky && this.stuck(i, x, y)) return;
+      if (this.zeroG) { this.drift(i, x, y, 0.03); return; } // floating in space
       if (BOUNCE[m] && this.bounce(i, x, y, m)) return;
       if (y >= this.h - 1) return;
       // Light, magical dusts drift down slowly.
@@ -1099,11 +1177,19 @@
       }
     }
 
+    // Zero gravity: now and then nudge into a random empty neighbouring cell, so things slowly drift about.
+    drift(i, x, y, p) {
+      if (rnd() > p) return;
+      const d = ri(8), xx = x + NX[d], yy = y + NY[d];
+      if (xx < 0 || yy < 0 || xx >= this.w || yy >= this.h) return;
+      const j = yy * this.w + xx; if (this.t[j] === 0) this.swap(i, j);
+    }
     liquid(i, x, y, m) {
       if (((m === M.LAVA || m === M.MOLTENGOLD) && rnd() < 0.6) || (m === M.QUICKSAND && rnd() < 0.92) || ((m === M.HONEY || m === M.MELTCHOC) && rnd() < 0.7) || (m === M.SWAMP && rnd() < 0.3)) return; // thick, slow liquids
       const w = this.w;
       if (STICKY[m] && this.clings(i, x, y, m)) return;
       if (ATTRACT[m] && this.magnets.length && this.pull(i, x, y)) return; // ferrofluid
+      if (this.zeroG) { this.drift(i, x, y, 0.07); return; } // floating blobs
       if (this.hasSticky && !STICKY[m] && this.stuck(i, x, y)) return;
       // (Nitro no longer goes off from a fall: only fire, sparks and blasts set it off.)
       if (y < this.h - 1) {
@@ -1932,7 +2018,7 @@
       c.x += dx; c.y += dy; return true;
     }
     fall(c, ok) {
-      c.vy = Math.min(c.vy + 0.08, 1);
+      c.vy = this.zeroG ? c.vy * 0.99 : Math.min(c.vy + 0.08, 1);
       if (!this.go(c, 0, c.vy, ok)) { c.vy = 0; c.y = Math.round(c.y); return false; }
       return true;
     }
@@ -2059,7 +2145,7 @@
       const footing = !open(this.cellAt(c.x, c.y + 1));
       if (c.s === 2 || !footing) {
         // In the air: arc under gravity.
-        c.s = 2; c.vy = Math.min(c.vy + 0.07, 1);
+        c.s = 2; c.vy = this.zeroG ? c.vy * 0.995 : Math.min(c.vy + 0.07, 1);
         if (!this.go(c, c.vx, 0, (m) => open(m) || WATERY[m])) { c.vx = -c.vx * 0.3; c.dir = -c.dir; }
         if (!this.go(c, 0, c.vy, (m) => open(m) || WATERY[m])) { if (c.vy > 0) { c.s = 0; c.vx = 0; c.y = Math.round(c.y); c.t = 50 + ri(120); } c.vy = 0; }
         return;
@@ -2114,6 +2200,13 @@
           }
           return;
         }
+      }
+      if (fallThru(below) && this.zeroG) { // nothing underfoot in space: float about, paddling slowly
+        if (!c.zd || rnd() < 0.01) c.zd = [(rnd() - 0.5) * 0.12, (rnd() - 0.5) * 0.12];
+        if (!this.go(c, c.zd[0], 0, fallThru)) c.zd[0] = -c.zd[0];
+        if (!this.go(c, 0, c.zd[1], fallThru)) c.zd[1] = -c.zd[1];
+        if (c.zd[0]) c.dir = c.zd[0] > 0 ? 1 : -1;
+        return;
       }
       if (fallThru(below)) { // nothing underfoot: fall
         c.vy = Math.min((c.vy || 0) + 0.08, 1);
@@ -2490,7 +2583,7 @@
       c.vx += (want * (wet ? 0.3 : 0.55) - c.vx) * (ground ? 0.35 : c.pz ? 0.02 : 0.12); // out of a portal he keeps his momentum
       if (keys.jump && ground && !wet && c.vy >= 0) c.vy = -1.55;
       else if (keys.jump && wet) c.vy = Math.max(c.vy - 0.12, -0.6);
-      if (wet) { c.vy = Math.min(c.vy + 0.03, 0.5) * 0.92; c.pz = 0; } else if (!(ground && c.vy === 0)) c.vy = Math.min(c.vy + 0.12, c.pz ? 9 : 2.6);
+      if (wet) { c.vy = Math.min(c.vy + 0.03, 0.5) * 0.92; c.pz = 0; } else if (this.zeroG) c.vy *= 0.995; else if (!(ground && c.vy === 0)) c.vy = Math.min(c.vy + 0.12, c.pz ? 9 : 2.6);
       if (here === M.QUICKSAND) { // wading through it is slow, and he sinks unless he keeps jumping
         c.vx *= 0.25; c.vy = keys.jump && rnd() < 0.35 ? -0.6 : 0.06;
         if (this.cellAt(c.x, c.y - 6) === M.QUICKSAND) { this.knockOut(c, 'void'); return; }
@@ -2890,6 +2983,7 @@
         if (other.hasTint && other.tint[b]) { this.tint[a] = other.tint[b]; this.hasTint = true; }
       }
       this.discovered.set(other.discovered);
+      this.zeroG = !!other.zeroG;
       const dy = oyThis - oyOther;
       if (other.stickHome) this.stickHome = { x: other.stickHome.x, y: other.stickHome.y + dy };
       this.creatures = [];
@@ -2900,5 +2994,5 @@
     }
   }
 
-  window.SandSim = { LIKE, World, rnd, ri, KIND, K, MAX_CREATURES, refresh };
+  window.SandSim = { LIKE, World, rnd, ri, KIND, K, MAX_CREATURES, refresh, TB, ROOM };
 })();

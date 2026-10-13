@@ -3,7 +3,7 @@
    away when online), falling back to the saved copy when offline. Fonts come
    from the saved copy and refresh in the background. Everything else (the AI
    Worker, the on-device AI download) is left alone. */
-const CACHE = 'sandalchemy-v3';
+const CACHE = 'sandalchemy-v4';
 const APP_FILES = ['./', 'index.html', 'css/styles.css', 'js/materials.js', 'js/sim.js', 'js/game.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png'];
 
@@ -34,13 +34,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.origin !== self.location.origin) return;
-  event.respondWith(
-    fetch(req, { cache: 'no-cache' }) // always ask GitHub whether there's a newer copy
-      .then((res) => {
-        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
-        return res;
-      })
-      .catch(async () => (await caches.match(req, { ignoreSearch: true })) ||
-        (req.mode === 'navigate' ? (await caches.match('index.html')) || caches.match('./') : Response.error()))
-  );
+  const saved = async () => (await caches.match(req, { ignoreSearch: true })) ||
+    (req.mode === 'navigate' ? (await caches.match('index.html')) || (await caches.match('./')) : null);
+  const net = fetch(req, { cache: 'no-cache' }) // always ask GitHub whether there's a newer copy
+    .then((res) => {
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+      return res;
+    });
+  // If GitHub hasn't answered in 4 seconds (Wi-Fi connected but the internet is down), use the saved copy.
+  // The download keeps going in the background, so the saved copy is still updated if it gets through.
+  const slow = new Promise((r) => setTimeout(r, 4000)).then(async () => (await saved()) || net);
+  event.respondWith(Promise.race([net, slow]).catch(async () => (await saved()) || Response.error()));
 });
