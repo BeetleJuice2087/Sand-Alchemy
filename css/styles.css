@@ -378,3 +378,9 @@ html, body { overflow-x: hidden; }
 .card.revealed b { color: var(--text); }
 .card.revealed span { color: var(--muted); }
 .sw.faded { opacity: 0.55; }
+
+/* Start over */
+.danger-ghost { color: #ff6b70; border-color: color-mix(in srgb, #e5484d 60%, var(--line)); }
+.danger-ghost:hover, .danger-ghost:focus-visible { background: color-mix(in srgb, #e5484d 14%, var(--surface)); }
+.primary-btn.danger.sure { animation: badge-shake 0.35s; }
+#erase-confirm .row + .row { margin-top: 10px; }

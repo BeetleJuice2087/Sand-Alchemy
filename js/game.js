@@ -1888,7 +1888,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   }
   /* Keyboard shortcuts:  C eraser · E dropper · B brew · F search · Space pause
      · Ctrl/Cmd+Z undo · Esc closes a panel (or cancels a line). */
-  const PANELS = ['#settings', '#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
+  const PANELS = ['#erase-confirm', '#settings', '#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
   let toolBefore = M.SAND;
   function toggleTool(m) {
     if (tool === m) pick(toolBefore !== m ? toolBefore : M.SAND);
@@ -2104,8 +2104,34 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     });
     $('#ai-log-clear').addEventListener('click', () => { aiLogLines = []; try { localStorage.removeItem(AILOG_KEY); } catch (e) { /* ignore */ } pre.textContent = '(empty)'; });
   })();
+  /* ---------------- Start over ----------------
+     Erases everything this game saved on this device (except the AI settings), then reloads fresh.
+     The Erase button needs a second tap, so it can't happen by accident. */
+  let eraseArmed = -1e9;
+  $('#erase-btn').addEventListener('click', () => {
+    const n = countFound(), inv = invCount();
+    $('#erase-text').textContent = `You'll lose your world, ${n} discoveries` + (inv ? `, ${inv} inventions` : '') + (favs.length ? `, ${favs.length} favorite${favs.length === 1 ? '' : 's'}` : '') + ' and every hint and reveal.';
+    eraseArmed = -1e9; $('#erase-yes').textContent = 'Erase everything'; $('#erase-yes').classList.remove('sure');
+    $('#erase-confirm').hidden = false;
+  });
+  $('#erase-no').addEventListener('click', () => { $('#erase-confirm').hidden = true; });
+  $('#erase-backup').addEventListener('click', () => { $('#backup-file').click(); });
+  $('#erase-yes').addEventListener('click', () => {
+    const btn = $('#erase-yes');
+    if (performance.now() - eraseArmed > 4000) { // first tap: ask once more
+      eraseArmed = performance.now(); btn.textContent = 'Tap again to erase'; btn.classList.remove('sure'); void btn.offsetWidth; btn.classList.add('sure'); return;
+    }
+    try {
+      const gone = [];
+      for (let k = 0; k < localStorage.length; k++) { const key = localStorage.key(k); if (key && key.startsWith('sandalchemy.') && key !== AI_KEY) gone.push(key); }
+      gone.forEach((key) => localStorage.removeItem(key));
+    } catch (e) { note('This browser won\u2019t let the game change its saved data.'); return; }
+    restoring = true; // nothing may save the old world on the way out
+    location.reload();
+  });
+
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 12, update 26';
+  const GAME_VERSION = 'Oct 12, update 27';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();

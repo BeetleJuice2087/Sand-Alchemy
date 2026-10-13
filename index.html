@@ -120,7 +120,7 @@
       </details>
     </section>
     <p class="game-ver" id="inv-count"></p>
-    <p class="game-ver" id="game-ver">Game version: Oct 12, update 22</p>
+    <p class="game-ver" id="game-ver">Game version: Oct 12, update 27</p>
     <section class="backup install" id="install-box" hidden>
       <h3>Install as an app</h3>
       <p class="sheet-lede">Put Sand Alchemy on your home screen. It opens full screen like a real app and works offline. Your discoveries stay the same.</p>
@@ -142,6 +142,26 @@
         <button class="primary-btn" id="restore-go" type="button">Restore code</button>
       </div>
     </section>
+    <section class="backup erase-box">
+      <h3>Start over</h3>
+      <p class="sheet-lede">Erase everything on this device: your world, discoveries, inventions, favorites and hints. You go back to the four starting elements. Your AI settings are kept.</p>
+      <button class="ghost-btn danger-ghost" id="erase-btn" type="button">Erase all data&hellip;</button>
+    </section>
+  </div>
+</div>
+
+<div class="overlay" id="erase-confirm" hidden>
+  <div class="sheet small" role="dialog" aria-modal="true" aria-labelledby="erase-title">
+    <h2 id="erase-title">Erase everything?</h2>
+    <p class="sheet-lede" id="erase-text"></p>
+    <p class="sheet-lede hold-tip">This can't be undone, unless you have a backup. Save one first if you might want it back.</p>
+    <div class="row">
+      <button class="ghost-btn" id="erase-backup" type="button">Save a backup first</button>
+    </div>
+    <div class="row">
+      <button class="ghost-btn" id="erase-no" type="button">Cancel</button>
+      <button class="primary-btn danger" id="erase-yes" type="button">Erase everything</button>
+    </div>
   </div>
 </div>
 
