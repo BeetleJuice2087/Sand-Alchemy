@@ -161,6 +161,7 @@
     canvas.style.top = Math.floor((r.height - h * cell) / 2) + 'px';
     image = ctx.createImageData(w, h);
     px = new Uint32Array(image.data.buffer);
+    sizeGlow(w, h);
     renderPalette(); renderCount();
   }
 
@@ -1055,7 +1056,10 @@
     small: { id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC', label: 'Small and quick', size: 'about 0.7 GB download' },
     middle: { id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', label: 'In-between', size: 'about 1 GB download' },
     better: { id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', label: 'Smarter', size: '1.8 GB, for computers' },
+    super: { id: 'Qwen2.5-7B-Instruct-q4f16_1-MLC', label: 'Super smart', size: 'about 4.5 GB, computers with 16 GB+' },
   };
+  // Phones and tablets never get offered the giant one.
+  const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
   const AIP = (() => {
     const STATES = ['powder', 'liquid', 'gas', 'solid'];
     const PROPS = ['glows', 'sticky', 'bouncy', 'flammable', 'explosive', 'evaporates', 'melts', 'freezes', 'grows', 'magnetic', 'conducts', 'hot', 'cold'];
@@ -1296,6 +1300,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   const MEM_NOTES = {
     middle: 'It needs about 1.6 GB of memory while it thinks. It may work on newer phones; if your other apps start closing, use Small and quick or Online.',
     better: 'It needs about 2 GB of memory while it thinks, so it\u2019s for computers only, unless your phone or tablet has plenty of memory. On a phone, pick Small and quick or use Online.',
+    super: 'The smartest one you can download. It needs about 5 GB of memory while it thinks, so use it on a computer with 16 GB or more. The first download takes a while, and each brew takes a little longer than the smaller ones.',
   };
   function memNote() { const n = $('#ai-mem-note'), t = MEM_NOTES[aiSettings.model]; n.hidden = !t; if (t) n.textContent = t; }
   // The "Cauldron spirit" box in the discovery book.
@@ -1307,6 +1312,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (window.isSecureContext === false) $('#ai-nogpu').textContent = 'AI on this device only works when the game is opened from its web page (like itch.io), not from a saved file. Online still works.';
     $('#ai-device').hidden = aiSettings.mode !== 'device';
     $('#ai-cloud').hidden = aiSettings.mode === 'device';
+    if (IS_MOBILE) { const o = $('#ai-model').querySelector('option[value="super"]'); if (o) o.remove(); if (aiSettings.model === 'super') aiSettings.model = 'better'; }
     $('#ai-model').value = aiSettings.model;
     memNote();
     [...$('#ai-model').options].forEach((o) => { const m = LOCAL_MODELS[o.value]; o.textContent = `${m.label} (${m.size})`; });
@@ -2083,6 +2089,61 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     }
   }
 
+  /* ---------------- Glow (bloom) ----------------
+     Everything that gives off light (lava, fire, lightning, glowing inventions,
+     red-hot rock) is gathered at half size, blurred, and laid over the world
+     with a "screen" blend, so it reads as soft light spilling around it. */
+  const glowCv = $('#glow'), gctx = glowCv.getContext('2d'), GLOW_KEY = 'sandalchemy.glow';
+  let glowOn = true; try { glowOn = localStorage.getItem(GLOW_KEY) !== '0'; } catch (e) { /* ignore */ }
+  const BD = 2; // one glow pixel covers 2x2 cells
+  let bw = 0, bh = 0, gA = null, gB = null, gImg = null, gPx = null, glowShown = false;
+  function sizeGlow(w, h) {
+    bw = Math.ceil(w / BD); bh = Math.ceil(h / BD);
+    glowCv.width = bw; glowCv.height = bh;
+    ['width', 'height', 'left', 'top'].forEach((k) => { glowCv.style[k] = canvas.style[k]; });
+    gA = [0, 1, 2].map(() => new Float32Array(bw * bh)); gB = [0, 1, 2].map(() => new Float32Array(bw * bh));
+    gImg = gctx.createImageData(bw, bh); gPx = new Uint32Array(gImg.data.buffer); glowShown = false;
+  }
+  // A box blur along rows (step 1) or columns (step bw), using a running sum.
+  function boxBlur(src, dst, r, rows) {
+    const len = rows ? bw : bh, lines = rows ? bh : bw, step = rows ? 1 : bw, d = 1 / (2 * r + 1);
+    for (let l = 0; l < lines; l++) {
+      const o = rows ? l * bw : l; let sum = 0;
+      for (let k = 0; k <= r && k < len; k++) sum += src[o + k * step];
+      for (let k = 0; k < len; k++) {
+        dst[o + k * step] = sum * d;
+        const add = k + r + 1, sub = k - r;
+        if (add < len) sum += src[o + add * step];
+        if (sub >= 0) sum -= src[o + sub * step];
+      }
+    }
+  }
+  function drawGlow() {
+    const n = world.emitN | 0;
+    if (!glowOn || !n) { if (glowShown) { gctx.clearRect(0, 0, bw, bh); glowShown = false; } return; }
+    const [R, G, B] = gA, W = world.w, I = world.emitI, K = world.emitK, CC = world.emitC;
+    R.fill(0); G.fill(0); B.fill(0);
+    for (let k = 0; k < n; k++) {
+      const i = I[k], x = i % W, y = (i / W) | 0, c = CC[k] || px[i], s = K[k] / (255 * BD * BD);
+      const j = ((y / BD) | 0) * bw + ((x / BD) | 0);
+      R[j] += (c & 255) * s; G[j] += ((c >> 8) & 255) * s; B[j] += ((c >> 16) & 255) * s;
+    }
+    for (let ch = 0; ch < 3; ch++) { // two rounds of box blur look close to a soft gaussian
+      const a = gA[ch], b = gB[ch];
+      boxBlur(a, b, 4, true); boxBlur(b, a, 4, false); boxBlur(a, b, 3, true); boxBlur(b, a, 3, false);
+    }
+    const gain = 3.2 / 255;
+    for (let j = 0; j < bw * bh; j++) {
+      const r = R[j], g = G[j], b = B[j];
+      if (r + g + b < 1) { gPx[j] = 0xff000000; continue; }
+      // Soft roll-off so big lava lakes glow without turning into a white blob.
+      gPx[j] = ((255 << 24) | (((255 * (1 - Math.exp(-b * gain))) & 255) << 16) | (((255 * (1 - Math.exp(-g * gain))) & 255) << 8) | ((255 * (1 - Math.exp(-r * gain))) & 255)) >>> 0;
+    }
+    gctx.putImageData(gImg, 0, 0); glowShown = true;
+  }
+  $('#glow-on').checked = glowOn;
+  $('#glow-on').addEventListener('change', (e) => { glowOn = e.target.checked; try { localStorage.setItem(GLOW_KEY, glowOn ? '1' : '0'); } catch (err) { /* ignore */ } });
+
   /* ---------------- Main loop ---------------- */
   let saveTimer = 0;
   function writeSaveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(writeSave, 800); }
@@ -2100,6 +2161,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (!paused) world.step();
     world.render(px);
     ctx.putImageData(image, 0, 0);
+    drawGlow();
     if (loupeAt) drawLoupe();
     requestAnimationFrame(frame);
   }
@@ -2171,7 +2233,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 12, update 35';
+  const GAME_VERSION = 'Oct 12, update 37';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();

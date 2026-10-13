@@ -85,6 +85,16 @@
   const PROP = new Uint8Array(COUNT), STICKY = new Uint8Array(COUNT), BOUNCE = new Uint8Array(COUNT), ATTRACT = new Uint8Array(COUNT);
   const CONDUCT = new Uint8Array(COUNT), POWER = new Uint8Array(COUNT), VOLATILE = new Uint8Array(COUNT), MAGNETIC = new Uint8Array(COUNT);
   const EVAP = [], MELTS = [], FREEZES = [], SETS = [], GROWS = [], GLOWS = [];
+  /* Glow (bloom): how brightly each material gives off light, 0-255. Fire-like
+     things are worked out per cell from their age instead (bright when new, fading out). */
+  const EMIT = new Uint8Array(COUNT);
+  [[M.ETERNAL, 200], [M.LAVA, 205], [M.MOLTENGOLD, 200], [M.EMBER, 170], [M.PLASMA, 230], [M.LIGHTNING, 255], [M.FIREWORK, 220],
+    [M.ROCKET, 210], [M.NEON, 150], [M.GLOWSTONE, 160], [M.STAR, 170], [M.LIQLIGHT, 180], [M.GLOWMOSS, 95], [M.HEATCRYSTAL, 150],
+    [M.PLUTONIUM, 95], [M.FAIRY, 110], [M.SPARKLE, 130], [M.STARDUST, 55], [M.PORTALIN, 85], [M.PORTALOUT, 85], [M.WHITEHOLE, 130],
+    [M.ANTIMATTER, 110], [M.FIREFLOWER, 70], [M.ELECMUSH, 85], [M.NEBULA, 60]].forEach(([m, k]) => { EMIT[m] = k; });
+  // What lava (or melted gold) hardens into stays red-hot for a while, then cools down.
+  const LAVA_GLOW = ((255 << 24) | (8 << 16) | (45 << 8) | 255) >>> 0; // lava lights things up red-orange
+  const COOLS = new Uint8Array(COUNT); [M.STONE, M.OBSIDIAN, M.PUMICE, M.METAL, M.GOLD, M.GLASS].forEach((m) => { COOLS[m] = 1; });
   const COLD = new Uint8Array(COUNT); [M.ICE, M.SNOW, M.FROSTCRYSTAL, M.COLDFIRE, M.DRYICE, M.LN2].forEach((m) => { COLD[m] = 1; });
   function buildProps(mt) {
     const m = mt.id;
@@ -137,6 +147,7 @@
       this.fx = new Float32Array(n); this.fy = new Float32Array(n); // and sub-cell position
       this.skin = new Uint16Array(n);   // which invention a cell really is (see LIKE)
       this.tint = new Uint16Array(n);   // painted cells: whose colours they show (they still act like themselves)
+      this.heat = new Uint8Array(n);    // freshly hardened lava: how hot it still is (glows, then cools)
       this.hasTint = false;
       this.hasSkins = false; this.curBase = 0; this.curSkin = 0;
       this.clock = 1;
@@ -167,6 +178,8 @@
       else if (this.curSkin && m === this.curBase) { sk = this.curSkin; this.hasSkins = true; }
       this.skin[i] = sk;
       if (this.hasTint) this.tint[i] = 0;
+      const was = this.t[i];
+      this.heat[i] = (was === M.LAVA || was === M.MOLTENGOLD) && COOLS[m] ? 255 : 0;
       this.t[i] = m;
       this.life[i] = life != null ? life : this.defaultLife(m);
       this.fuel[i] = 0;
@@ -206,6 +219,7 @@
       v = l[i]; l[i] = l[j]; l[j] = v;
       v = s[i]; s[i] = s[j]; s[j] = v;
       v = f[i]; f[i] = f[j]; f[j] = v;
+      const hh = this.heat; v = hh[i]; hh[i] = hh[j]; hh[j] = v;
       if (this.hasTint) { const p = this.tint; v = p[i]; p[i] = p[j]; p[j] = v; }
       if (this.hasBouncy && (BOUNCE[t[i]] || BOUNCE[t[j]])) {
         const X = this.vx, Y = this.vy, P = this.fx, Q = this.fy;
@@ -631,9 +645,14 @@
           }
           if (p.vx > 9) p.vx = 9; else if (p.vx < -9) p.vx = -9; if (p.vy < -9) p.vy = -9;
         }
-        if (this.airOn) { // grains in the air are carried along by the wind (light ones more)
-          const wd = this.windAt(p.x, p.y), k = 0.12 / (0.6 + (p.wt || 2) * 0.25), boost = 2.4 / (0.6 + (p.wt || 2) * 0.25), ws = Math.hypot(wd[0], wd[1]); if (ws > 6) { wd[0] *= 6 / ws; wd[1] *= 6 / ws; }
-          p.vx += (wd[0] * boost - p.vx) * k; p.vy += (wd[1] * boost - p.vy) * k; p.vx = Math.max(-9, Math.min(9, p.vx));
+        if (this.airOn) { // grains in the air are carried along by the wind (light ones more), but only where it's really blowing
+          const wd = this.windAt(p.x, p.y), k = 0.12 / (0.6 + (p.wt || 2) * 0.25), boost = 2.4 / (0.6 + (p.wt || 2) * 0.25), ws = Math.hypot(wd[0], wd[1]);
+          if (ws > 0.3) {
+            if (ws > 6) { wd[0] *= 6 / ws; wd[1] *= 6 / ws; }
+            if (p.pz) { p.vx += wd[0] * boost * k * 0.5; p.vy += wd[1] * boost * k * 0.5; } // portal-speed grains get pushed, not slowed down
+            else { p.vx += (wd[0] * boost - p.vx) * k; p.vy += (wd[1] * boost - p.vy) * k; }
+            p.vx = Math.max(-9, Math.min(9, p.vx));
+          }
         }
         const n = Math.max(1, Math.ceil(Math.max(Math.abs(p.vx), Math.abs(p.vy))));
         let landed = false;
@@ -2506,8 +2525,15 @@
         if (c.carry) { const x = cx, y = cy - 2; if (x >= 0 && y >= 0 && x < w && y < h) px[y * w + x] = this.colors[c.carry * 16 + 6]; }
       }
     }
+    // Remember a lit cell for the bloom pass (game.js blurs these into soft light).
+    emit(i, k) {
+      if (!this.emitI) { this.emitI = new Int32Array(60000); this.emitK = new Uint8Array(60000); this.emitC = new Uint32Array(60000); }
+      const n = this.emitN; if (n >= 60000) return;
+      this.emitI[n] = i; this.emitK[n] = k; this.emitC[n] = 0; this.emitN = n + 1;
+    }
     // A soft halo, painted only over empty sky so it reads as light.
     glow(px, cx, cy, r, rgb, k) {
+      if (cx >= 0 && cy >= 0 && cx < this.w && cy < this.h) { this.emit(cy * this.w + cx, Math.round(150 * (k || 1))); const [cr, cg, cb] = rgb || [216, 255, 90]; this.emitC[this.emitN - 1] = ((255 << 24) | (cb << 16) | (cg << 8) | cr) >>> 0; }
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         const d = dx * dx + dy * dy; if (d > r * r + 1) continue;
         const x = cx + dx, y = cy + dy; if (x < 0 || y < 0 || x >= this.w || y >= this.h) continue;
@@ -2713,6 +2739,33 @@
         else if (m === M.WALL) { const x = i % this.w, y = (i / this.w) | 0, row = (y / 3) | 0; s = (y % 3 === 2 || (x + (row & 1) * 3) % 6 === 5) ? 15 : (sh[i] >> 6); } // bricks and mortar
         px[i] = this.hasTint && this.tint[i] ? C[this.tint[i] * 16 + (this.tint[i] === M.RAINBOW ? ((i % this.w) + ((i / this.w) | 0) + (fr >> 1)) & 15 : s)] : C[cm * 16 + s];
       }
+      // Light for the bloom pass, and freshly hardened lava that is still red-hot.
+      this.emitN = 0;
+      const heat = this.heat, fuel = this.fuel, cool = fr !== this._heatFr; this._heatFr = fr;
+      for (let i = 0; i < n; i++) {
+        const m = t[i];
+        if (m === 0) { if (heat[i]) heat[i] = 0; continue; }
+        let k = EMIT[m];
+        if (m === M.FIRE || m === M.COLDFIRE) k = 70 + Math.min(185, life[i] * 7);  // bright when new, fading as it burns out
+        else if (m === M.GHOSTFIRE) k = 45 + Math.min(120, life[i] * 3);
+        else if (CONDUCT[m] && life[i] > 0) k = 200;                                 // electricity in a wire
+        else if (m === M.THERMITE && fuel[i]) k = 255;
+        else if (m === M.TNT && fuel[i]) k = 110;
+        else if (!k && (GLOWS[m] || (this.hasSkins && this.skin[i] && GLOWS[this.skin[i]]))) k = 120;
+        const hv = heat[i];
+        if (hv) {
+          if (!COOLS[m]) heat[i] = 0;
+          else {
+            const f = hv / 255, wgt = Math.min(1, f * 2.2), c = px[i];
+            const hr = 255, hg = 22 + 190 * f * f, hb = 4 + 50 * f * f * f;     // yellow-white when fresh, deep red as it cools
+            const r = (c & 255) + (hr - (c & 255)) * wgt, g = ((c >> 8) & 255) + (hg - ((c >> 8) & 255)) * wgt, b = ((c >> 16) & 255) + (hb - ((c >> 16) & 255)) * wgt;
+            px[i] = ((255 << 24) | ((b & 255) << 16) | ((g & 255) << 8) | (r & 255)) >>> 0;
+            const hk = (hv * 0.85) | 0; if (hk > k) k = hk;
+            if (cool && ((fr + i) % 3) === 0) heat[i] = hv - 1;                    // about 13 seconds to cool
+          }
+        }
+        if (k) { this.emit(i, k); if (m === M.LAVA && !(this.hasSkins && this.skin[i])) this.emitC[this.emitN - 1] = LAVA_GLOW; }
+      }
       // Glowing elements light up the empty space around them.
       for (let k = 0; k < glowN; k++) {
         const i = glowList[k], gx = i % this.w, gy = (i / this.w) | 0, [cr, cg, cb] = GLOWS[t[i]] || GLOWS[this.skin[i]];
@@ -2737,6 +2790,7 @@
         const x = Math.round(p.x), y = Math.round(p.y); if (x < 0 || y < 0 || x >= this.w || y >= this.h) continue;
         const cm = p.sk && LIKE[p.sk] === p.m ? p.sk : p.m, col = C[cm * 16 + (p.s >> 4)];
         px[y * this.w + x] = col;
+        if (EMIT[p.m] || p.m === M.FIRE) this.emit(y * this.w + x, EMIT[p.m] || 200); // flying embers and lava blobs glow too
         const sp = Math.abs(p.vx) + Math.abs(p.vy);
         if (sp > 3.5) { // going fast: a little streak behind it
           const n = Math.min(4, Math.floor(sp / 2)), ux = p.vx / sp, uy = p.vy / sp;
