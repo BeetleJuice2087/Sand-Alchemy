@@ -261,6 +261,7 @@
     else { sw.className = 'sw'; sw.setAttribute('style', swatchStyle(tool)); $('#current-name').textContent = MATS[tool].name; }
     $('#current-size').textContent = BRUSHES[brush].label;
     $('#current-size').hidden = tool === DROPPER;
+    if (typeof syncPortalBtn === 'function') syncPortalBtn();
   }
   function syncBrush() {
     const b = BRUSHES[brush];
@@ -1798,6 +1799,41 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     ring.style.top = (r.top - s.top + (cy + 0.5) * cell) + 'px';
     ring.hidden = false;
   }
+  /* ---------------- Portals: a ghost outline, and R (or the button) to turn them sideways ----------------
+     The outline follows your finger (or the mouse); the portal goes down where you let go. */
+  const ghost = $('#portal-ghost');
+  let portalRot = 0, portalDrag = false;
+  try { portalRot = localStorage.getItem('sandalchemy.portalrot') === '1' ? 1 : 0; } catch (e) { /* fine */ }
+  const isPortal = () => tool === M.PORTALIN || tool === M.PORTALOUT;
+  function portalBox(cx, cy) { // 2 cells thick; the brush sets how long (6 with the medium brush)
+    const len = Math.max(2, BRUSHES[brush].r * 2);
+    return portalRot ? { x0: cx - (len >> 1), y0: cy, w: len, h: 2 } : { x0: cx, y0: cy - (len >> 1), w: 2, h: len };
+  }
+  function placePortal(cx, cy) {
+    const b = portalBox(cx, cy), w = world.w, h = world.h, t = world.t;
+    for (let dy = 0; dy < b.h; dy++) for (let dx = 0; dx < b.w; dx++) {
+      const x = b.x0 + dx, y = b.y0 + dy; if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      const i = y * w + x, kb = KIND[t[i]];
+      if (t[i] === 0 || kb === K.gas || kb === K.fire || kb === K.cloud || kb === K.spark || kb === K.liquid || kb === K.powder) world.put(i, tool);
+    }
+  }
+  function showGhost(e, show) {
+    if (!isPortal() || !show) { ghost.hidden = true; return; }
+    const r = canvas.getBoundingClientRect(), s = stage.getBoundingClientRect(), [cx, cy] = toCell(e), b = portalBox(cx, cy);
+    ghost.classList.toggle('out', tool === M.PORTALOUT);
+    ghost.style.left = (r.left - s.left + b.x0 * cell) + 'px'; ghost.style.top = (r.top - s.top + b.y0 * cell) + 'px';
+    ghost.style.width = (b.w * cell) + 'px'; ghost.style.height = (b.h * cell) + 'px';
+    ghost.hidden = false; showGhost.last = e;
+  }
+  function rotatePortal() {
+    portalRot ^= 1;
+    try { localStorage.setItem('sandalchemy.portalrot', String(portalRot)); } catch (e) { /* fine */ }
+    syncPortalBtn(); note(portalRot ? 'Portal: sideways' : 'Portal: upright');
+    if (!ghost.hidden && showGhost.last) showGhost(showGhost.last, true);
+  }
+  function syncPortalBtn() { $('#portal-rot').hidden = !isPortal(); $('#portal-rot-label').textContent = portalRot ? 'Sideways' : 'Upright'; if (!isPortal()) ghost.hidden = true; }
+  $('#portal-rot').addEventListener('click', rotatePortal);
+
   /* Eye dropper: press, aim with the magnifier, let go to start painting with what's under it. */
   const ALIAS = { [M.ROCKET]: M.FIREWORK };
   const loupe = $('#loupe'), lctx = $('#loupe-canvas').getContext('2d'), LZ = 13; // cells shown across the magnifier
@@ -1946,6 +1982,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       case 'c': toggleTool(ERASE); break;
       case 'e': toggleTool(DROPPER); break;
       case 'b': openBrew(); break;
+      case 'r': if (isPortal()) rotatePortal(); else return; break;
       case 'f': e.preventDefault(); openFind(); break;
       case ' ': e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); $('#btn-pause').click(); break;
       default: return;
@@ -1957,6 +1994,10 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     const twoTaps = e.pointerType !== 'mouse' && lastTap && performance.now() - lastTap.t < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
     if ((e.shiftKey || twoTaps) && tool !== DROPPER && baseOf(tool) !== M.LIGHTNING) { e.preventDefault(); lastTap = null; startLine(e); return; }
     if (tool !== DROPPER) snapshot();
+    if (isPortal()) { // show where it'll go; it's placed when you let go
+      e.preventDefault(); try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* fine */ } $('#tip').classList.add('gone');
+      portalDrag = true; showGhost(e, true); return;
+    }
     if (tool === DROPPER) {
       e.preventDefault(); canvas.setPointerCapture(e.pointerId);
       $('#tip').classList.add('gone'); dropping = true; showLoupe(e); return;
@@ -1970,6 +2011,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
   canvas.addEventListener('pointermove', (e) => {
     if (line) { lineEnd(e); drawLinePreview(); return; }
+    if (isPortal()) { showGhost(e, portalDrag || e.pointerType === 'mouse'); return; }
     if (tool === DROPPER) { if (dropping || e.pointerType === 'mouse') showLoupe(e); else hideLoupe(); return; }
     moveRing(e, drawing || e.pointerType === 'mouse');
     if (!drawing) return;
@@ -1981,10 +2023,16 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     // Remember quick taps so a second tap right after can start a line.
     if (downAt && e.type === 'pointerup' && e.pointerType !== 'mouse' && performance.now() - downAt.t < 250 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 12) lastTap = { t: performance.now(), x: e.clientX, y: e.clientY };
     if (line) { endLine(e.type === 'pointerup'); return; }
+    if (portalDrag) {
+      portalDrag = false;
+      if (e.type === 'pointerup') { const [cx, cy] = toCell(e); placePortal(cx, cy); writeSaveSoon(); }
+      if (e.pointerType !== 'mouse') ghost.hidden = true;
+      return;
+    }
     if (dropping) { dropping = false; pickFromLoupe(); if (e.pointerType !== 'mouse' || tool !== DROPPER) hideLoupe(); return; } if (e.pointerType !== 'mouse') ring.hidden = true; if (drawing) { drawing = false; writeSaveSoon(); } };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', (e) => { ring.hidden = true; dropping = false; hideLoupe(); endLine(false); stop(e); });
-  canvas.addEventListener('pointerleave', () => { if (!drawing) ring.hidden = true; if (!dropping) hideLoupe(); });
+  canvas.addEventListener('pointerleave', () => { if (!portalDrag) ghost.hidden = true; if (!drawing) ring.hidden = true; if (!dropping) hideLoupe(); });
 
   function paintLine(x0, y0, x1, y1) {
     const r = BRUSHES[brush].r, d = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
@@ -2004,15 +2052,11 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       return;
     }
     if (tool === M.PORTALIN || tool === M.PORTALOUT) {
-      // A portal is a bar 2 cells wide; the brush sets how tall it is (6 for the medium brush).
+      // A portal is a bar 2 cells thick; the brush sets how long it is (6 for the medium brush), R turns it.
       const ph = Math.max(2, r * 2);
       if ((cx - petX) ** 2 + (cy - petY) ** 2 < ph * ph / 2) return;
       petX = cx; petY = cy;
-      for (let dy = 0; dy < ph; dy++) for (let dx = 0; dx < 2; dx++) {
-        const x = cx + dx, y = cy - (ph >> 1) + dy; if (x < 0 || y < 0 || x >= w || y >= h) continue;
-        const i = y * w + x, kb = KIND[t[i]];
-        if (t[i] === 0 || kb === K.gas || kb === K.fire || kb === K.cloud || kb === K.spark || kb === K.liquid || kb === K.powder) world.put(i, tool);
-      }
+      placePortal(cx, cy);
       return;
     }
     if (isCreature(tool)) {
@@ -2134,7 +2178,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 12, update 29';
+  const GAME_VERSION = 'Oct 12, update 30';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();
