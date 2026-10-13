@@ -34,6 +34,9 @@
     <button class="icon-btn" id="btn-clear" type="button" aria-label="Clear the world (hold to remove one element)" title="Clear the world · hold to remove one element">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
     </button>
+    <button class="icon-btn" id="btn-worlds" type="button" aria-label="My saved worlds" title="My worlds (save and load)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h12a.5.5 0 0 1 .5.5v16.5l-6.5-4.2-6.5 4.2V4a.5.5 0 0 1 .5-.5z" /></svg>
+    </button>
     <button class="icon-btn" id="btn-settings" type="button" aria-label="Settings" title="Settings">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
     </button>
@@ -85,6 +88,21 @@
     <div class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></svg><input type="search" id="book-search" placeholder="Search your discoveries" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Search your discoveries"><button class="search-x" type="button" aria-label="Clear search" hidden>&times;</button></div>
     <div class="book-grid" id="book-grid"></div>
     <p class="no-match" hidden>No discovered elements match that.</p>
+  </div>
+</div>
+<div class="overlay" id="worlds" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="worlds-title">
+    <header class="sheet-head">
+      <h2 id="worlds-title">My worlds</h2>
+      <span class="sheet-count" id="worlds-count"></span>
+      <button class="icon-btn" id="worlds-close" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+    </header>
+    <p class="sheet-lede">Save a world you like and come back to it later. Loading one replaces what's on screen (Undo brings it back).</p>
+    <div class="row worlds-save"><input type="text" id="world-name" maxlength="40" placeholder="Name this world" autocomplete="off" spellcheck="false" aria-label="World name"><button class="primary-btn" id="world-save" type="button">Save this world</button></div>
+    <div class="worlds-grid" id="worlds-grid"></div>
+    <p class="no-match" id="worlds-empty" hidden>No saved worlds yet. Build something you like, then save it here.</p>
   </div>
 </div>
 <div class="overlay" id="settings" hidden>

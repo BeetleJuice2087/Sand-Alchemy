@@ -330,6 +330,114 @@
     $('#confirm').hidden = true; writeSave();
   });
 
+  /* ---------------- Saved worlds ----------------
+     Each saved world is kept in the browser's IndexedDB (lots of room), squeezed
+     with gzip when the browser can, plus a small picture for the list. If IndexedDB
+     isn't available it falls back to localStorage (room for only a few worlds). */
+  const WDB = (() => {
+    let p = null;
+    const open = () => p || (p = new Promise((res, rej) => {
+      try {
+        const r = indexedDB.open('sandalchemy-worlds', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('worlds', { keyPath: 'id' });
+        r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error || new Error('no db'));
+      } catch (e) { rej(e); }
+    }));
+    const LS = 'sandalchemy.worlds';
+    const lsAll = () => { try { return JSON.parse(localStorage.getItem(LS) || '[]'); } catch (e) { return []; } };
+    const lsSet = (a) => localStorage.setItem(LS, JSON.stringify(a)); // throws when full
+    async function tx(mode, fn) {
+      const d = await open();
+      return new Promise((res, rej) => { const t = d.transaction('worlds', mode), r = fn(t.objectStore('worlds')); t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error('aborted')); });
+    }
+    return {
+      all: () => tx('readonly', (s) => s.getAll()).catch(() => lsAll()),
+      put: (rec) => tx('readwrite', (s) => s.put(rec)).catch(() => { const a = lsAll().filter((x) => x.id !== rec.id); a.push(rec); lsSet(a); }),
+      del: (id) => tx('readwrite', (s) => s.delete(id)).catch(() => lsSet(lsAll().filter((x) => x.id !== id))),
+    };
+  })();
+  async function squeeze(str) {
+    if (typeof CompressionStream === 'undefined') return { z: 0, d: str };
+    const buf = await new Response(new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+    return { z: 1, d: pack(new Uint8Array(buf)) };
+  }
+  async function unsqueeze(o) {
+    if (!o.z) return o.d;
+    const bin = atob(o.d), b = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+    return new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  }
+  function worldThumb() {
+    const tw = 240, th = Math.max(1, Math.round(tw * world.h / world.w)), c = document.createElement('canvas');
+    c.width = tw; c.height = th; const g = c.getContext('2d');
+    const sky = g.createLinearGradient(0, 0, 0, th); sky.addColorStop(0, '#1d1f4a'); sky.addColorStop(1, '#0f1026');
+    g.fillStyle = sky; g.fillRect(0, 0, tw, th);
+    g.drawImage(canvas, 0, 0, tw, th);
+    if (glowOn) { g.globalCompositeOperation = 'screen'; g.drawImage(glowCv, 0, 0, tw, th); }
+    return c.toDataURL('image/jpeg', 0.82);
+  }
+  let worldList = [];
+  async function renderWorlds() {
+    try { worldList = (await WDB.all()) || []; } catch (e) { worldList = []; }
+    worldList.sort((a, b) => b.at - a.at);
+    const grid = $('#worlds-grid'); grid.textContent = '';
+    $('#worlds-empty').hidden = worldList.length > 0;
+    $('#worlds-count').textContent = worldList.length ? worldList.length + ' saved' : '';
+    worldList.forEach((r) => {
+      const card = document.createElement('div'); card.className = 'wcard';
+      const img = document.createElement('img'); img.src = r.thumb; img.alt = ''; img.title = 'Load ' + r.name; img.addEventListener('click', () => loadWorld(r));
+      const body = document.createElement('div'); body.className = 'wcard-body';
+      const txt = document.createElement('div'); txt.className = 'wcard-text';
+      const b = document.createElement('b'); b.textContent = r.name;
+      const s = document.createElement('span'); s.textContent = new Date(r.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      txt.append(b, s);
+      const load = document.createElement('button'); load.type = 'button'; load.className = 'wload'; load.textContent = 'Load'; load.addEventListener('click', () => loadWorld(r));
+      const del = document.createElement('button'); del.type = 'button'; del.className = 'wdel'; del.textContent = '\u00d7'; del.setAttribute('aria-label', 'Delete ' + r.name);
+      let armed = 0;
+      del.addEventListener('click', async () => {
+        if (Date.now() > armed) { armed = Date.now() + 3000; del.classList.add('armed'); del.textContent = 'Delete?'; setTimeout(() => { if (Date.now() > armed) { del.classList.remove('armed'); del.textContent = '\u00d7'; } }, 3100); return; }
+        await WDB.del(r.id); note('Deleted \u201c' + r.name + '\u201d'); renderWorlds();
+      });
+      body.append(txt, load, del); card.append(img, body); grid.append(card);
+    });
+  }
+  async function saveWorld() {
+    const btn = $('#world-save'), input = $('#world-name');
+    const name = input.value.trim().slice(0, 40) || 'World ' + (worldList.length + 1);
+    btn.disabled = true; btn.textContent = 'Saving\u2026';
+    try {
+      const s = buildSave().world;
+      s.bh = (world.bhStore || []).slice(0, 12000); // what the black holes have swallowed, so white holes keep going
+      if (world.stickHome) s.home = world.stickHome;
+      const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, at: Date.now(), w: world.w, h: world.h, thumb: worldThumb(), data: await squeeze(JSON.stringify(s)) };
+      await WDB.put(rec);
+      input.value = ''; note('Saved \u201c' + name + '\u201d'); renderWorlds();
+    } catch (e) { note('Couldn\u2019t save it: this browser is out of room. Delete an old world and try again.'); }
+    btn.disabled = false; btn.textContent = 'Save this world';
+  }
+  async function loadWorld(r) {
+    let sw;
+    try { sw = JSON.parse(await unsqueeze(r.data)); } catch (e) { note('That saved world couldn\u2019t be opened.'); return; }
+    const old = restoreWorld({ v: 2, world: sw });
+    if (!old) { note('That saved world couldn\u2019t be opened.'); return; }
+    snapshot();
+    world.t.fill(0); world.life.fill(0); world.fuel.fill(0); world.creatures = [];
+    world.skin.fill(0); world.tint.fill(0); world.hasTint = false; if (world.heat) world.heat.fill(0);
+    world.flying = []; world.pendingBlasts = []; world.pendingFrost = []; world.holes = null; world.portOut = [];
+    if (world.au) { world.au.fill(0); world.av.fill(0); world.ap.fill(0); world.ap2.fill(0); world.airOn = false; }
+    if (sw.home) old.stickHome = sw.home;
+    old.discovered.set(world.discovered); // loading never changes what you've discovered
+    world.copyFrom(old);
+    world.bhStore = [];
+    const ok = (m) => Number.isInteger(m) && m >= 0 && m < COUNT && !(m && MATS[m].reserved);
+    if (Array.isArray(sw.bh)) for (let k = 0; k + 1 < sw.bh.length; k += 2) if (sw.bh[k] && ok(sw.bh[k]) && ok(sw.bh[k + 1])) world.bhStore.push(sw.bh[k], sw.bh[k + 1]); // (material, skin) pairs
+    $('#worlds').hidden = true; writeSave();
+    note('Loaded \u201c' + r.name + '\u201d' + (r.w !== world.w || r.h !== world.h ? ' (fitted to this screen)' : '') + '. Undo brings back what you had.');
+  }
+  $('#btn-worlds').addEventListener('click', () => { $('#worlds').hidden = false; renderWorlds(); });
+  $('#worlds-close').addEventListener('click', () => { $('#worlds').hidden = true; });
+  $('#world-save').addEventListener('click', saveWorld);
+  $('#world-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveWorld(); } });
+
   /* ---------------- Discoveries ---------------- */
   const toastQueue = []; let toastBusy = false;
   function discovered(m) {
@@ -1926,7 +2034,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   }
   /* Keyboard shortcuts:  C eraser · E dropper · B brew · F search · Space pause
      · Ctrl/Cmd+Z undo · Esc closes a panel (or cancels a line). */
-  const PANELS = ['#erase-confirm', '#settings', '#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
+  const PANELS = ['#worlds', '#erase-confirm', '#settings', '#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
   let toolBefore = M.SAND;
   function toggleTool(m) {
     if (tool === m) pick(toolBefore !== m ? toolBefore : M.SAND);
@@ -2233,7 +2341,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 12, update 37';
+  const GAME_VERSION = 'Oct 13, update 40';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();

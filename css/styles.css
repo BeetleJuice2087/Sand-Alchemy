@@ -364,6 +364,20 @@ html, body { overflow-x: hidden; }
 .grp.fav { color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); }
 .mat.is-fav::before { content: '\2605'; position: absolute; top: 2px; left: 5px; font-size: 10px; line-height: 1; color: var(--gold); }
 .mat { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+/* Saved worlds */
+.worlds-save { display: flex; gap: 8px; margin: 4px 0 14px; }
+.worlds-save input { flex: 1; min-width: 0; height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; }
+.worlds-save .primary-btn { flex: none; height: 44px; padding: 0 18px; font-size: 0.9rem; }
+.worlds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 10px; }
+.wcard { border-radius: 14px; border: 1px solid var(--line); background: var(--surface); overflow: hidden; display: flex; flex-direction: column; }
+.wcard img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: center bottom; background: #15173a; image-rendering: pixelated; cursor: pointer; }
+.wcard-body { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; }
+.wcard-text { flex: 1; min-width: 0; }
+.wcard-text b { display: block; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wcard-text span { display: block; color: var(--muted); font-size: 0.72rem; }
+.wcard .wload { flex: none; height: 32px; padding: 0 14px; border-radius: 999px; border: none; background: var(--accent); color: #14152e; font-weight: 800; cursor: pointer; }
+.wcard .wdel { flex: none; height: 32px; min-width: 32px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); cursor: pointer; font-weight: 700; }
+.wcard .wdel.armed { color: #fff; background: #e5484d; border-color: #e5484d; }
 .card.has-fav { position: relative; padding-right: 36px; }
 .card.has-fav.has-del { padding-right: 68px; }
 .card-fav { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--muted);

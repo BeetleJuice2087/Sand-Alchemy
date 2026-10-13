@@ -372,7 +372,9 @@
   /* Objects ("stamps"): tap to place a whole build. Each letter is a material;
      '.' leaves what's there, '_' clears to empty space. The bottom row sits
      where you tap. */
-  function stamp(id, o) { def(id, Object.assign({ kind: 'stamp', density: 1, object: true }, o)); }
+  // Objects (ready-made builds) have been taken out of the game: they're kept here, hidden, only so
+  // old saves still load. Nothing brews them any more.
+  function stamp(id, o) { def(id, Object.assign({ kind: 'stamp', density: 1, object: true, hidden: true, retired: true }, o)); }
   stamp(M.HOUSE, { key: 'house', name: 'House', colors: ['#b5483a', '#7a5a3a'],
     hint: 'Bricks with windows.', recipe: 'Brick + Glass', desc: 'A little house with a door and windows. Made of real brick, glass and wood.',
     key2: { W: M.WOOD, B: M.BRICK, G: M.GLASS },
@@ -779,12 +781,6 @@
   brew(M.CATERPILLAR, M.RAINBOW, M.BUTTERFLY);
   brew(M.BIRD, M.SAND, M.EGG);
   // Objects
-  brew(M.BRICK, M.GLASS, M.HOUSE);
-  brew(M.STONE, M.LAVA, M.VOLCANO);
-  brew(M.WOOD, M.GOLD, M.CHEST);
-  brew(M.SNOW, M.COAL, M.SNOWMAN);
-  brew(M.WOOD, M.EMBER, M.CAMPFIRE);
-  brew(M.BRICK, M.STONE, M.CASTLE);
   // Elements with properties
   brew(M.STONE, M.FIREFLY, M.GLOWSTONE);
   brew(M.HONEY, M.SLIME, M.GLUE);
@@ -819,12 +815,6 @@
   brew(M.BIRD, M.ETERNAL, M.PHOENIX);
   brew(M.COW, M.RAINBOW, M.UNICORN);
   brew(M.BIRD, M.WATER, M.DUCK);
-  brew(M.GLOWSTONE, M.BRICK, M.LIGHTHOUSE);
-  brew(M.SANDSTONE, M.GOLD, M.PYRAMID);
-  brew(M.ICE, M.SNOW, M.IGLOO);
-  brew(M.WAX, M.EMBER, M.CANDLE);
-  brew(M.STONE, M.WATER, M.FOUNTAIN);
-  brew(M.CHOCOLATE, M.CANDY, M.GINGERBREAD);
   // Third wave
   brew(M.WATER, M.LIGHTNING, M.HYDROGEN);
   brew(M.PLANT, M.CLOUD, M.OXYGEN);

@@ -798,10 +798,27 @@
           }
         }
       };
+      // Break a small chunk (a few connected solid cells) off whatever the ray hit, and send the pieces
+      // flying towards the hole together. Bigger holes rip off bigger chunks.
+      const tearChunk = (j, c, d) => {
+        const size = 1 + ri(Math.min(6, 2 + Math.round(c.s))), dx = (j % w) - c.x, dy = ((j / w) | 0) - c.y;
+        const v = Math.min(3.2 + c.s * 0.4, 1.4 + d * 0.03), vx = -dx / d * v, vy = Math.max(-9, -dy / d * v - 0.08 * d / v);
+        const chunk = [j], seen = new Set(chunk);
+        for (let q = 0; q < chunk.length && chunk.length < size; q++) {
+          const i = chunk[q], ix = i % w, s0 = ri(4);
+          for (let k = 0; k < 4 && chunk.length < size; k++) {
+            const e = (s0 + k) & 3, nx = ix + (e === 0 ? -1 : e === 1 ? 1 : 0), nb = i + (e === 0 ? -1 : e === 1 ? 1 : e === 2 ? -w : w);
+            if (nx < 0 || nx >= w || nb < 0 || nb >= t.length || seen.has(nb)) continue;
+            const b = t[nb]; if (!b || KIND[b] !== K.solid || PROOF[b]) continue;
+            seen.add(nb); chunk.push(nb);
+          }
+        }
+        for (const i of chunk) { if (this.flying.length >= 4000) break; grab(i, vx + (rnd() - 0.5) * 0.2, vy + (rnd() - 0.5) * 0.2); this.fuel[i] = 0; }
+      };
       // Holes: rays from the middle of each one; more rays, farther reach and a stronger grip the bigger it is.
       const holePass = (list, sign, self) => {
         for (const c of list) {
-          const rays = Math.min(120, Math.round(4 * c.n)), R = sign < 0 ? c.R : c.R * 0.65;
+          const rays = Math.min(sign < 0 ? 240 : 120, Math.round(4 * c.n)), R = sign < 0 ? c.R : c.R * 0.65;
           for (let k = 0; k < rays && this.flying.length < 4000; k++) {
             const a = rnd() * Math.PI * 2, ux = Math.cos(a), uy = Math.sin(a);
             let j = -1, d = 1;
@@ -812,9 +829,24 @@
               if (b === 0 || b === M.SPARKLE || b === self) continue;
               j = q; break;
             }
-            if (j < 0 || !loose(t[j]) || rnd() > (sign < 0 ? 1 : 1.2) * c.s * 14 / (Math.max(0, d - c.r) + 8)) continue;
+            if (j < 0) continue;
+            if (sign < 0 && KIND[t[j]] === K.solid && !PROOF[t[j]]) { // solids: a black hole tears off little chunks and drags them in
+              if (rnd() < 0.14 * c.s * 14 / (Math.max(0, d - c.r) + 8)) tearChunk(j, c, d);
+              continue;
+            }
+            if (!loose(t[j]) || rnd() > (sign < 0 ? 1 : 1.2) * c.s * 14 / (Math.max(0, d - c.r) + 8)) continue;
             const dx = (j % w) - c.x, dy = ((j / w) | 0) - c.y;
-            if (sign < 0) { const v = Math.min(3.4 + c.s * 0.4, 1.6 + d * 0.03); grab(j, -dx / d * v, Math.max(-9, -dy / d * v - 0.08 * d / v)); } // aimed so it arcs right into the hole
+            if (sign < 0) {
+              const v = Math.min(3.4 + c.s * 0.4, 1.6 + d * 0.03), vx = -dx / d * v, vy = Math.max(-9, -dy / d * v - 0.08 * d / v);
+              grab(j, vx, vy); // aimed so it arcs right into the hole
+              // A big hole takes a gulp: more of the pile behind it comes along too (a lake drains fast).
+              for (let g = Math.floor(c.s), dd = d + 1; g > 0 && dd <= R + 6 && this.flying.length < 4000; g--, dd++) {
+                const xx = Math.round(c.x + ux * dd), yy = Math.round(c.y + uy * dd);
+                if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
+                const q = yy * w + xx; if (!loose(t[q])) break;
+                grab(q, vx * 0.95, vy * 0.95);
+              }
+            }
             else { const sp = Math.min(4.5, 1 + 30 * c.s / (d + 6)), sx = dx > 0 ? 1 : dx < 0 ? -1 : (rnd() < 0.5 ? -1 : 1); grab(j, dx / d * sp * 1.2 + sx * sp * 0.4, -(sp * 0.9 + 0.8) + (dy < 0 ? dy / d * sp * 0.6 : 0)); } // thrown outwards and up
           }
         }
@@ -823,17 +855,28 @@
       holePass(H.whC, 1, M.WHITEHOLE);
       pass(H.vac, H.vacN, 16, -1, 0.9, M.VACUUM);
       for (let e = 0; e < H.vac.length; e += 2) if (rnd() < 0.5) this.airForce(H.vac[e], H.vac[e + 1], -1, false); // the air rushes in too
-      // White holes spit out whatever the black holes swallowed.
+      // White holes spit out whatever the black holes swallowed, from all around their edge.
+      // The bigger the white hole, the faster it pours out.
       const st = this.bhStore;
-      if (H.wh.length && st && st.length) {
-        for (let e = 0; e < H.wh.length && st.length; e += 2) {
-          for (let k = 0; k < 3 && st.length; k++) {
-            const d = ri(8), xx = H.wh[e] + NX[d] * 2, yy = H.wh[e + 1] + NY[d] * 2;
-            if (xx < 0 || yy < 0 || xx >= w || yy >= h || t[yy * w + xx] !== 0) continue;
+      if (H.whC.length && st && st.length) {
+        for (const c of H.whC) {
+          const tries = Math.round(8 + 3 * Math.sqrt(c.n));
+          for (let k = 0; k < tries && st.length && this.flying.length < 5000; k++) {
+            const a = rnd() * Math.PI * 2, ux = Math.cos(a), uy = Math.sin(a);
+            let q = -1, xx = 0, yy = 0;
+            for (let dd = Math.max(1, Math.floor(c.r)); dd <= c.r + 5; dd++) { // just outside the edge in that direction
+              xx = Math.round(c.x + ux * dd); yy = Math.round(c.y + uy * dd);
+              if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
+              const b = t[yy * w + xx]; if (b === M.WHITEHOLE) continue;
+              if (b === 0) q = yy * w + xx;
+              break;
+            }
+            if (q < 0) continue;
             const sk = st.pop(), m = st.pop();
-            if (sk === 0xFFFF) { const c = this.spawn(m, xx, yy, false); if (c) c.vy = -0.5; continue; } // a creature it swallowed
+            if (sk === 0xFFFF) { const cr = this.spawn(m, xx, yy, false); if (cr) cr.vy = -0.5; continue; } // a creature it swallowed
             if (!MATS[m] || MATS[m].reserved) continue;
-            if (this.flying.length < 5000) { const a = Math.atan2(NY[d], NX[d]) + (rnd() - 0.5) * 1.2, v = 0.9 + rnd() * 0.6; this.flying.push({ m, sk, l: this.defaultLife(m), s: ri(256), x: xx, y: yy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, wt: 1, zg: 360 }); }
+            const b = a + (rnd() - 0.5) * 1.2, v = 0.9 + rnd() * 0.6 + Math.min(0.8, c.s * 0.08);
+            this.flying.push({ m, sk, l: this.defaultLife(m), s: ri(256), x: xx, y: yy, vx: Math.cos(b) * v, vy: Math.sin(b) * v, wt: 1, zg: 360 });
           }
         }
       }
