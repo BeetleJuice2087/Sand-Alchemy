@@ -166,6 +166,7 @@
       this.airOn = false;       // the air simulation sleeps until something stirs it
       this.blastsNow = 0;       // explosions this frame: a chain reaction throws things harder
       this.zeroG = false;       // zero gravity: grains and liquids float, only holes pull
+      this.dayT = 0.1;          // time of day (0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight)
       this.tw = Math.ceil(w / TB); this.th = Math.ceil(h / TB);
       this.temp = new Float32Array(this.tw * this.th).fill(ROOM); // temperature of each 4x4 block
       this.tempNext = new Float32Array(this.tw * this.th); this.tSum = new Float32Array(this.tw * this.th); this.tN = new Uint16Array(this.tw * this.th); this.tFull = new Uint16Array(this.tw * this.th);
@@ -2983,7 +2984,7 @@
         if (other.hasTint && other.tint[b]) { this.tint[a] = other.tint[b]; this.hasTint = true; }
       }
       this.discovered.set(other.discovered);
-      this.zeroG = !!other.zeroG;
+      this.zeroG = !!other.zeroG; this.dayT = other.dayT || 0.1;
       const dy = oyThis - oyOther;
       if (other.stickHome) this.stickHome = { x: other.stickHome.x, y: other.stickHome.y + dy };
       this.creatures = [];

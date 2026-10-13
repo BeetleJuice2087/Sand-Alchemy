@@ -366,6 +366,14 @@ html, body { overflow-x: hidden; }
 .grp.fav { color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); }
 .mat.is-fav::before { content: '\2605'; position: absolute; top: 2px; left: 5px; font-size: 10px; line-height: 1; color: var(--gold); }
 .mat { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+/* Day and night: the sky behind the world, the sun, the moon and the stars */
+.sky { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.sky[hidden] { display: none; }
+#stars { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sun, .moon { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; }
+.sun { background: radial-gradient(circle, #fffbe6 0 38%, #ffe27a 55%, rgba(255, 200, 80, 0) 72%); box-shadow: 0 0 60px 30px rgba(255, 214, 120, 0.35); }
+.moon { width: 34px; height: 34px; margin: -17px 0 0 -17px; background: radial-gradient(circle at 38% 38%, #ffffff 0 30%, #dfe6ff 55%, #b9c3e8 100%); box-shadow: 0 0 40px 12px rgba(190, 205, 255, 0.25); }
+#world.dim { transition: filter 0.6s linear; }
 /* World controls (speed, zero gravity, heat view, zoom) */
 .world-btn { position: absolute; z-index: 5; right: 10px; top: 10px; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px 0 9px; border-radius: 999px;
   border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 88%, transparent); color: var(--text); font: inherit; font-size: 0.8rem; font-weight: 800; cursor: pointer; backdrop-filter: blur(4px); }

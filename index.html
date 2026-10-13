@@ -43,6 +43,7 @@
   </header>
 
   <main class="stage" id="stage">
+    <div class="sky" id="sky" aria-hidden="true"><canvas id="stars"></canvas><i class="sun" id="sun"></i><i class="moon" id="moon"></i></div>
     <canvas id="world" aria-label="Sandbox. Draw with your finger or mouse."></canvas>
     <canvas id="heat" aria-hidden="true" hidden></canvas>
     <canvas id="glow" aria-hidden="true"></canvas>
@@ -56,9 +57,10 @@
       <div class="sp-group"><button type="button" class="sp-btn" data-k="left" aria-label="Walk left">&#9664;</button><button type="button" class="sp-btn" data-k="right" aria-label="Walk right">&#9654;</button></div>
       <button type="button" class="sp-btn sp-jump" data-k="jump" aria-label="Jump">&#10514;</button>
     </div>
-    <button class="world-btn" id="world-btn" type="button" aria-label="World controls: speed, gravity, heat view and zoom" aria-expanded="false" title="World controls"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 8v4l2.5 2" /></svg><span id="world-btn-label">1&times;</span><b id="world-btn-zg" hidden>0G</b><b id="world-btn-heat" hidden>&#127777;</b><b id="world-btn-zoom" hidden></b></button>
+    <button class="world-btn" id="world-btn" type="button" aria-label="World controls: speed, gravity, heat view and zoom" aria-expanded="false" title="World controls"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 8v4l2.5 2" /></svg><span id="world-btn-label">1&times;</span><b id="world-btn-zg" hidden>0G</b><b id="world-btn-heat" hidden>&#127777;</b><b id="world-btn-zoom" hidden></b><b id="world-btn-sky" hidden></b></button>
     <div class="world-panel" id="world-panel" hidden>
       <div class="wp-row"><span class="wp-label">Speed</span><div class="wp-seg" id="wp-speed" role="radiogroup" aria-label="Speed"><button type="button" data-s="0.25">&frac14;&times;</button><button type="button" data-s="0.5">&frac12;&times;</button><button type="button" data-s="1">1&times;</button><button type="button" data-s="2">2&times;</button><button type="button" data-s="4">4&times;</button></div></div>
+      <div class="wp-row"><span class="wp-label">Sky</span><div class="wp-seg" id="wp-sky" role="radiogroup" aria-label="Sky"><button type="button" data-k="classic">Classic</button><button type="button" data-k="day">Day</button><button type="button" data-k="night">Night</button><button type="button" data-k="cycle">Cycle</button></div></div>
       <div class="wp-row"><span class="wp-label">Step</span><button type="button" class="wp-btn" id="wp-step" title="Move one frame forward (. key)">Pause &amp; step one frame</button></div>
       <label class="wp-row wp-switch"><span class="wp-label">Zero gravity</span><input type="checkbox" id="wp-zerog"><small>Things float. Only black and white holes pull. (G)</small></label>
       <label class="wp-row wp-switch"><span class="wp-label">Heat view</span><input type="checkbox" id="wp-thermal"><small>See how hot or cold everything is. (T)</small></label>

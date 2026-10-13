@@ -83,7 +83,7 @@
     // (age keeps fires and growing trees going; memory is what a mirror copies).
     // Version 2 stores material, memory and paint as two bytes per cell (ids go past 255).
     return { v: 2, disc, unseen: [...unseen], hinted: [...hinted], revealed: [...revealed], favs, tool, brush, inv: inventions,
-      world: { w: world.w, h: world.h, zg: world.zeroG ? 1 : undefined, t: pack16(world.exportT()), l: pack(world.life), f: pack16(world.fuel), p: world.hasTint ? pack16(world.tint) : undefined,
+      world: { w: world.w, h: world.h, zg: world.zeroG ? 1 : undefined, dt: world.dayT ? +world.dayT.toFixed(4) : undefined, t: pack16(world.exportT()), l: pack(world.life), f: pack16(world.fuel), p: world.hasTint ? pack16(world.tint) : undefined,
         c: world.creatures.map((c) => [c.k, Math.round(c.x), Math.round(c.y), c.dir, c.into || 0, c.s === 5 ? 5 : 0, Math.min(c.age || 0, 99999)]) } };
   }
   function writeSave() {
@@ -111,7 +111,7 @@
       const sw = saved.world, w = sw.w | 0, h = sw.h | 0;
       if (w < 1 || h < 1 || w * h > 4e6) return null;
       const old = new World(w, h), wide = saved.v >= 2, un = wide ? unpack16 : unpack;
-      old.zeroG = !!sw.zg;
+      old.zeroG = !!sw.zg; old.dayT = +sw.dt || 0.1;
       un(sw.t, old.t, COUNT);
       for (let i = 0; i < old.t.length; i++) if (MATS[old.t[i]].reserved) old.t[i] = 0; // an invention that's gone
       try { if (sw.l) { unpack(sw.l, old.life, 256); old.hadLife = true; } if (sw.f) un(sw.f, old.fuel, 65536); if (sw.p) { un(sw.p, old.tint, COUNT); for (let i = 0; i < old.tint.length; i++) if (old.tint[i] && MATS[old.tint[i]].reserved) old.tint[i] = 0; old.hasTint = true; } } catch (e) { /* older saves: ages start fresh */ }
@@ -132,7 +132,7 @@
     const r = stage.getBoundingClientRect();
     cell = r.width < 700 ? 3 : Math.max(3, Math.round(r.width / 320));
     const w = Math.max(40, Math.floor(r.width / cell)), h = Math.max(40, Math.floor(r.height / cell));
-    if (world && world.w === w && world.h === h) { layoutView(); return; }
+    if (world && world.w === w && world.h === h) { layoutView(); drawStars(); return; }
     const next = new World(w, h);
     if (world) next.copyFrom(world);
     else {
@@ -160,7 +160,7 @@
     canvas.width = w; canvas.height = h;
     image = ctx.createImageData(w, h);
     px = new Uint32Array(image.data.buffer);
-    sizeGlow(w, h); sizeHeat(); layoutView();
+    sizeGlow(w, h); sizeHeat(); layoutView(); drawStars(); skyShown = ''; updateSky();
     renderPalette(); renderCount();
   }
 
@@ -2262,6 +2262,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       case '.': stepOnce(); break;
       case 'g': setZeroG(!world.zeroG); break;
       case 't': setThermal(!thermal); break;
+      case 'n': setSky(['classic', 'day', 'night', 'cycle'][(['classic', 'day', 'night', 'cycle'].indexOf(skyMode) + 1) % 4]); note('Sky: ' + skyMode); break;
       case '=': case '+': zoomCentre(1.5); break;
       case '-': case '_': zoomCentre(1 / 1.5); break;
       case '0': zoom = 1; layoutView(); break;
@@ -2376,6 +2377,58 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     }
   }
 
+  /* ---------------- Day and night ----------------
+     Sky modes: classic (the original look), day, night, or a cycle that follows the world's clock
+     (so fast-forward speeds it up and pausing stops the sun). world.dayT: 0 sunrise, 0.25 noon,
+     0.5 sunset, 0.75 midnight. At night the world dims but the glow layer doesn't, so lights shine. */
+  const SKY_KEY = 'sandalchemy.sky', DAYLEN = 60 * 180; // a whole day takes 3 minutes at normal speed
+  let skyMode = 'classic', glowMul = 1, skyShown = '';
+  try { skyMode = localStorage.getItem(SKY_KEY) || 'classic'; } catch (e) { /* fine */ }
+  const hexRGB = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const mixC = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * k));
+  const css = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+  const SKY = { dayTop: hexRGB('#4f9be0'), dayMid: hexRGB('#86c0ef'), dayBot: hexRGB('#c4e4fb'),
+    nightTop: hexRGB('#151838'), nightMid: hexRGB('#0d0f28'), nightBot: hexRGB('#06071a'),
+    duskTop: hexRGB('#3d3a7e'), duskMid: hexRGB('#c0607a'), duskBot: hexRGB('#ffa25e') };
+  function drawStars() {
+    const c = $('#stars'), r = stage.getBoundingClientRect(); c.width = Math.max(1, r.width); c.height = Math.max(1, r.height);
+    const g = c.getContext('2d'); let seed = 7;
+    const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    for (let k = 0; k < Math.round(r.width * r.height / 2200); k++) {
+      const x = rand() * r.width, y = rand() * r.height * 0.8, a = 0.3 + rand() * 0.7, sz = rand() < 0.1 ? 2 : 1;
+      g.fillStyle = `rgba(255,255,255,${a})`; g.fillRect(x, y, sz, sz);
+    }
+  }
+  function updateSky() {
+    const st = stage.style, wc = canvas.style;
+    if (skyMode === 'classic') {
+      if (skyShown !== 'classic') { st.background = ''; wc.filter = ''; $('#sky').hidden = true; glowMul = 1; $('#world-btn-sky').hidden = true; skyShown = 'classic'; }
+      return;
+    }
+    skyShown = skyMode; $('#sky').hidden = false;
+    const t = skyMode === 'day' ? 0.25 : skyMode === 'night' ? 0.75 : (world.dayT || 0);
+    const d = Math.sin(2 * Math.PI * t); // 1 at noon, -1 at midnight
+    const k = Math.min(1, Math.max(0, (d + 0.25) / 0.5)), light = k * k * (3 - 2 * k);
+    const dusk = Math.max(0, 1 - Math.abs(d) / 0.32) * 0.85;
+    const pick = (n) => mixC(mixC(SKY['night' + n], SKY['day' + n], light), SKY['dusk' + n], dusk);
+    st.background = `linear-gradient(180deg, ${css(pick('Top'))} 0%, ${css(pick('Mid'))} 62%, ${css(pick('Bot'))} 100%)`;
+    // The sun crosses the sky from sunrise to sunset, the moon from sunset to sunrise.
+    const arc = (el, s) => { const on = s > -0.06 && s < 1.06; el.style.display = on ? '' : 'none'; if (on) { el.style.left = (6 + 88 * s) + '%'; el.style.top = (92 - 76 * Math.sin(Math.PI * Math.min(1, Math.max(0, s)))) + '%'; } };
+    arc($('#sun'), t < 0.6 ? t / 0.5 : (t - 1) / 0.5);
+    arc($('#moon'), ((t + 0.5) % 1) / 0.5);
+    $('#stars').style.opacity = (1 - light) * 0.95;
+    wc.filter = light > 0.98 ? '' : `brightness(${(0.45 + 0.55 * light).toFixed(2)}) saturate(${(0.7 + 0.3 * light).toFixed(2)})`;
+    glowMul = 1.7 - 0.95 * light; // lights look brighter in the dark
+    const badge = $('#world-btn-sky'); badge.hidden = false; badge.textContent = dusk > 0.45 ? '\u{1F305}' : light > 0.5 ? '\u2600' : '\u263E';
+  }
+  function setSky(m) {
+    skyMode = m; try { localStorage.setItem(SKY_KEY, m); } catch (e) { /* fine */ }
+    document.querySelectorAll('#wp-sky button').forEach((b) => b.classList.toggle('on', b.dataset.k === m));
+    skyShown = ''; updateSky();
+  }
+  document.querySelectorAll('#wp-sky button').forEach((b) => b.addEventListener('click', () => setSky(b.dataset.k)));
+  document.querySelectorAll('#wp-sky button').forEach((b) => b.classList.toggle('on', b.dataset.k === skyMode));
+
   /* ---------------- Heat view ----------------
      The temperature of each 4x4 block, tinted over the world: blue is cold, clear is room
      temperature, and orange, red, yellow and white get hotter and hotter. */
@@ -2447,7 +2500,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       const a = gA[ch], b = gB[ch];
       boxBlur(a, b, 4, true); boxBlur(b, a, 4, false); boxBlur(a, b, 3, true); boxBlur(b, a, 3, false);
     }
-    const gain = 3.2 / 255;
+    const gain = 3.2 * glowMul / 255;
     for (let j = 0; j < bw * bh; j++) {
       const r = R[j], g = G[j], b = B[j];
       if (r + g + b < 1) { gPx[j] = 0xff000000; continue; }
@@ -2655,7 +2708,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (!paused) {
       // Slow motion steps the world every few frames; fast forward steps it several times a frame.
       stepAcc += speed;
-      for (let n = 0; stepAcc >= 1 && n < 4; n++, stepAcc--) { world.step(); playWorldSounds(); }
+      for (let n = 0; stepAcc >= 1 && n < 4; n++, stepAcc--) { world.step(); playWorldSounds(); if (skyMode === 'cycle') world.dayT = ((world.dayT || 0) + 1 / DAYLEN) % 1; }
       if ((++frameTick & 7) === 0) sampleAmbient();
       quietNow = false;
     } else if (!quietNow) { quietNow = true; SND.ambient(null); } // paused: the world goes quiet
@@ -2663,6 +2716,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     ctx.putImageData(image, 0, 0);
     drawGlow();
     if (thermal && (frameTick & 3) === 0) drawHeat();
+    if (skyMode !== 'classic' && (frameTick % 6) === 0) updateSky();
     if (loupeAt) drawLoupe();
     requestAnimationFrame(frame);
   }
@@ -2734,7 +2788,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 13, update 49';
+  const GAME_VERSION = 'Oct 13, update 50';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave, sound: SND };
 })();
