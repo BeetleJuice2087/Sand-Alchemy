@@ -28,7 +28,9 @@
     M.OWL, M.BAT, M.TURTLE, M.MOUSE, M.OCTOPUS, M.PHOENIX, M.UNICORN, M.DUCK, M.WALL, M.WEB,
     M.LIGHTHOUSE, M.PYRAMID, M.IGLOO, M.CANDLE, M.FOUNTAIN, M.GINGERBREAD,
     M.HYDROGEN, M.OXYGEN, M.LN2, M.SPONGE, M.VIRUS, M.CURE, M.TNT, M.C4, M.THERMITE, M.PLUTONIUM, M.ANTIMATTER,
-    M.VACUUM, M.PORTALIN, M.PORTALOUT, M.BLACKHOLE, M.WHITEHOLE, M.GRAVBOMB, M.STICKMAN];
+    M.VACUUM, M.PORTALIN, M.PORTALOUT, M.BLACKHOLE, M.WHITEHOLE, M.GRAVBOMB, M.STICKMAN,
+    M.QUICKSAND, M.PUMICE, M.SULFUR, M.MERCURY, M.FERROFLUID, M.MOLTENGOLD, M.RESIN, M.AMBER, M.AEROGEL, M.EXPLJELLY,
+    M.METEORITE, M.GEODE, M.FIREFLOWER, M.FROSTFERN, M.ELECMUSH, M.GLOWMOSS, M.LIQLIGHT, M.INK, M.NEBULA, M.HEATCRYSTAL];
   const brewed = (m) => MATS[m].magic || MATS[m].crafted || MATS[m].creature || MATS[m].object || MATS[m].invented || MATS[m].science || MATS[m].space;
   const isCreature = (m) => m > 0 && m < COUNT && !!MATS[m].creature;
   const isObject = (m) => m > 0 && m < COUNT && !!MATS[m].object;
@@ -141,6 +143,7 @@
       // Older saves kept no ages: give restored fire and steam fresh lifetimes so they don't live forever.
       if (old && !old.hadLife) for (let i = 0; i < next.t.length; i++) if (next.t[i] && !next.life[i]) next.life[i] = next.defaultLife(next.t[i]);
       ORDER.forEach((m) => { if (MATS[m].start) next.discovered[m] = 1; });
+      next.discovered[M.CAULDRON] = 1; // no need to find it any more: the Brew pot is always there
       if (saved && saved.disc) saved.disc.forEach((m) => { if (m > 0 && m < COUNT) next.discovered[m] = 1; });
       // Every invention you made counts as found (one could slip through if you changed picks while the AI was thinking).
       inventions.forEach((r) => { if (r && MATS[r.id] && !MATS[r.id].reserved) next.discovered[r.id] = 1; });
@@ -204,7 +207,7 @@
   function renderPalette() {
     const pal = $('#palette');
     pal.innerHTML = '';
-    $('#btn-pot').hidden = !world.discovered[M.CAULDRON];
+    $('#btn-pot').hidden = false; // the Cauldron is always there
     pal.append(matButton(ERASE, 'Eraser'));
     pal.append(matButton(DROPPER, 'Dropper'));
     const fv = favItems();
@@ -959,7 +962,7 @@
     const parts = Array.isArray(rec.parts) && rec.parts.length > 2 ? rec.parts.slice(0, 4).map(Number) : null; // a 3 or 4 ingredient brew
     const ing = parts || [a, b];
     if (ing.some((m) => !(m > 0 && m < COUNT) || !MATS[m] || MATS[m].reserved)) return 0;
-    const same = findByName(rec.spec && rec.spec.name);
+    const same = rec.id ? 0 : findByName(rec.spec && rec.spec.name); // (a saved invention keeps its place even if a built-in later gets the same name)
     if (same) { // the AI named something that already exists
       if (parts) MULTI.set(multiKey(parts), same); else { MAGIC[a * COUNT + b] = same; MAGIC[b * COUNT + a] = same; }
       return same;
@@ -1942,7 +1945,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     switch (e.key.toLowerCase()) {
       case 'c': toggleTool(ERASE); break;
       case 'e': toggleTool(DROPPER); break;
-      case 'b': if (!$('#btn-pot').hidden) openBrew(); else note('Find the Cauldron first (Metal + Crystal).'); break;
+      case 'b': openBrew(); break;
       case 'f': e.preventDefault(); openFind(); break;
       case ' ': e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); $('#btn-pause').click(); break;
       default: return;
@@ -2131,7 +2134,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 12, update 27';
+  const GAME_VERSION = 'Oct 12, update 29';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();

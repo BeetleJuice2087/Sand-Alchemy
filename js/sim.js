@@ -38,7 +38,7 @@
   }
   [M.WATER, M.SEAWATER, M.SWAMP, M.POTION].forEach((m) => { WATERY[m] = 1; });
   [M.DIRT, M.MUD, M.SAND, M.ASH, M.CLAY].forEach((m) => { SOIL[m] = 1; });
-  [M.FIRE, M.COLDFIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.ACID, M.PLASMA, M.LIGHTNING, M.EMBER, M.VOID, M.ROCKET, M.VIRUS, M.ANTIMATTER].forEach((m) => { DEADLY[m] = 1; });
+  [M.FIRE, M.COLDFIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.ACID, M.PLASMA, M.LIGHTNING, M.EMBER, M.VOID, M.ROCKET, M.VIRUS, M.ANTIMATTER, M.MOLTENGOLD].forEach((m) => { DEADLY[m] = 1; });
   [M.FIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.PLASMA, M.LIGHTNING, M.EMBER].forEach((m) => { HOT[m] = 1; });
   const BUGS = new Uint8Array(COUNT), FISHY = new Uint8Array(COUNT);
   BUGS[M.FIREFLY] = BUGS[M.BEE] = BUGS[M.ANT] = BUGS[M.BUTTERFLY] = BUGS[M.CATERPILLAR] = 1; FISHY[M.FISH] = FISHY[M.TADPOLE] = 1;
@@ -47,7 +47,7 @@
   const ABIL = []; MATS.forEach((m) => { if (m && m.abil) ABIL[m.id] = m.abil; });
   const FX = []; // effects an invented element has on the world around it (wind, frost, sparks...)
   // How hard each explosive goes off (gunpowder = 1). Other explosive inventions use 1.6.
-  const BOOM = new Float32Array(COUNT); BOOM[M.GUNPOWDER] = 1; BOOM[M.NITRO] = 3; BOOM[M.TNT] = 2.2; BOOM[M.C4] = 3.6; BOOM[M.HYDROGEN] = 0.8;
+  const BOOM = new Float32Array(COUNT); BOOM[M.GUNPOWDER] = 1; BOOM[M.NITRO] = 3; BOOM[M.TNT] = 2.2; BOOM[M.C4] = 3.6; BOOM[M.HYDROGEN] = 0.8; BOOM[M.EXPLJELLY] = 1.8;
   // Third wave: what each new thing can't touch.
   const PROOF = new Uint8Array(COUNT); // walls, holes and portals: nothing breaks, eats or infects them
   [M.WALL, M.BLACKHOLE, M.WHITEHOLE, M.PORTALIN, M.PORTALOUT, M.CAULDRON].forEach((m) => { PROOF[m] = 1; });
@@ -57,7 +57,7 @@
     M.GOLD, M.CRYSTAL, M.VACUUM, M.CLAY].forEach((m) => { MELTABLE[m] = 1; });
   const boomOf = (m) => BOOM[m] || 1.6;
   const FIERY = new Uint8Array(COUNT);
-  [M.FIRE, M.COLDFIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.PLASMA, M.LIGHTNING, M.EMBER, M.ROCKET].forEach((m) => { FIERY[m] = 1; });
+  [M.FIRE, M.COLDFIRE, M.GHOSTFIRE, M.ETERNAL, M.LAVA, M.PLASMA, M.LIGHTNING, M.EMBER, M.ROCKET, M.HEATCRYSTAL, M.MOLTENGOLD].forEach((m) => { FIERY[m] = 1; });
   const blend = (under, over) => { // mix a see-through sprite pixel over what's below
     const a = (over >>> 24) / 255, b = 1 - a;
     const r = (over & 255) * a + (under & 255) * b, g = ((over >> 8) & 255) * a + ((under >> 8) & 255) * b, bl = ((over >> 16) & 255) * a + ((under >> 16) & 255) * b;
@@ -264,6 +264,7 @@
         const j = y * w + x, b = this.t[j];
         if (b === M.METAL || b === M.OBSIDIAN || b === M.DIAMOND || b === M.BRICK || b === M.STEEL || PROOF[b] || b === M.VACUUM) continue;
         if (b === M.GUNPOWDER) { this.t[j] = 0; this.pendingBlasts.push(x, y, 1); continue; }
+        if (b === M.GEODE) { this.put(j, rnd() < 0.75 ? M.CRYSTAL : M.STARDUST); continue; } // cracks open: crystals inside
         if (b === M.TNT || b === M.HYDROGEN) { this.t[j] = 0; this.pendingBlasts.push(x, y, BOOM[b]); continue; } // a blast sets TNT off straight away
         if (b === M.THERMITE) { if (!this.fuel[j]) { this.fuel[j] = 1; this.life[j] = 150 + ri(70); } continue; }
         if (b === M.GRAVBOMB) { this.fuel[j] = 1; this.life[j] = 1 + ri(3); continue; }
@@ -987,6 +988,7 @@
       if (y >= this.h - 1) return;
       // Light, magical dusts drift down slowly.
       if (m === M.STARDUST && rnd() < 0.5) return;
+      if (m === M.AEROGEL && rnd() < 0.88) { if (rnd() < 0.15) { const dx = rnd() < 0.5 ? -1 : 1, xx = x + dx; if (xx >= 0 && xx < this.w && this.t[i + dx] === 0) this.swap(i, i + dx); } return; } // floats down like a feather
       if (m === M.MOONDUST) {
         if (rnd() < 0.85) {
           if (rnd() < 0.2) { const dx = rnd() < 0.5 ? -1 : 1, xx = x + dx; if (xx >= 0 && xx < this.w && this.t[i + dx] === 0) this.swap(i, i + dx); }
@@ -1006,9 +1008,10 @@
     }
 
     liquid(i, x, y, m) {
-      if ((m === M.LAVA && rnd() < 0.6) || ((m === M.HONEY || m === M.MELTCHOC) && rnd() < 0.7) || (m === M.SWAMP && rnd() < 0.3)) return; // thick, slow liquids
+      if (((m === M.LAVA || m === M.MOLTENGOLD) && rnd() < 0.6) || (m === M.QUICKSAND && rnd() < 0.92) || ((m === M.HONEY || m === M.MELTCHOC) && rnd() < 0.7) || (m === M.SWAMP && rnd() < 0.3)) return; // thick, slow liquids
       const w = this.w;
       if (STICKY[m] && this.clings(i, x, y, m)) return;
+      if (ATTRACT[m] && this.magnets.length && this.pull(i, x, y)) return; // ferrofluid
       if (this.hasSticky && !STICKY[m] && this.stuck(i, x, y)) return;
       // (Nitro no longer goes off from a fall: only fire, sparks and blasts set it off.)
       if (y < this.h - 1) {
@@ -1113,11 +1116,13 @@
       if (life[i]-- <= 1) {
         const f = fuel[i];
         if (f === M.HYDROGEN) { if (rnd() < 0.5) this.put(i, M.WATER); else t[i] = 0; return; } // burnt hydrogen is water
+        if (f === M.SULFUR) { this.put(i, M.SMOKE); return; } // thick smoke
         if ((f === M.PLANT || f === M.WOOD) && rnd() < 0.5) this.put(i, M.ASH);
         else if (rnd() < (f === M.OIL ? 0.5 : 0.22)) this.put(i, M.SMOKE);
         else t[i] = 0;
         return;
       }
+      if (fuel[i] === M.SULFUR && y > 0 && t[i - w] === 0 && rnd() < 0.04) { this.put(i - w, M.SMOKE); this.stamp[i - w] = this.clock; }
       if (fuel[i]) {
         // Burning material stays put and sends flames up.
         if (y > 0 && t[i - w] === 0 && rnd() < 0.3) { this.put(i - w, M.FIRE, 6 + ri(14)); this.stamp[i - w] = this.clock; }
@@ -1318,13 +1323,13 @@
             }
           }
           break;
-        case M.MOSS:
+        case M.MOSS: case M.GLOWMOSS:
           // Moss creeps over stone, but only where it's damp.
           if (rnd() < 0.03) {
             const d = ri(8), xx = x + NX[d], yy = y + NY[d];
             if (xx >= 0 && yy >= 0 && xx < w && yy < h) {
               const j = yy * w + xx, b = t[j];
-              if ((b === M.STONE || b === M.BRICK || b === M.SANDSTONE) && (this.near(xx, yy, M.WATER) || this.near(x, y, M.WATER))) this.put(j, M.MOSS);
+              if ((b === M.STONE || b === M.BRICK || b === M.SANDSTONE) && (this.near(xx, yy, M.WATER) || this.near(x, y, M.WATER))) this.put(j, m);
             }
           }
           break;
@@ -1500,6 +1505,44 @@
             if (hit) { this.fuel[i] = 1; life[i] = 40 + ri(16); }
           } else if (life[i]-- <= 1) this.gravPush(x, y);
           break;
+        // ---------------- Fourth wave ----------------
+        case M.METEORITE: {
+          // Falls fast with a trail of sparks; the farther it falls, the bigger the crash (fuel counts the fall).
+          if (y < h - 1 && this.yields(m, i + w)) {
+            let j = i;
+            for (let k = 0; k < 2 && ((j / w) | 0) < h - 1 && this.yields(m, j + w); k++) { this.swap(j, j + w); j += w; }
+            this.fuel[j] = Math.min(250, this.fuel[j] + 2);
+            if (t[i] === 0 && rnd() < 0.6) { this.put(i, M.SPARKLE, 4 + ri(5)); this.stamp[i] = this.clock; }
+            break;
+          }
+          if (this.fuel[i] > 16) { // crash!
+            const p = 1 + Math.min(this.fuel[i], 150) / 40; t[i] = 0; this.fuel[i] = 0;
+            this.blast(x, y, p); this.put(i, M.IRON); this.stamp[i] = this.clock;
+          } else this.fuel[i] = 0;
+          break;
+        }
+        case M.FIREFLOWER:
+          if (y > 0 && t[i - w] === 0 && rnd() < 0.008) { this.put(i - w, M.FIRE, 4 + ri(6)); this.stamp[i - w] = this.clock; } // a little spark
+          break;
+        case M.FROSTFERN: case M.HEATCRYSTAL: {
+          if (rnd() > 0.15) break;
+          const xx = x + ri(5) - 2, yy = y + ri(5) - 2; if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
+          const j = yy * w + xx, b = t[j];
+          if (m === M.FROSTFERN) { // freezes water, puts out flames
+            if (b === M.WATER || b === M.SEAWATER) this.put(j, M.ICE); else if (b === M.STEAM) this.put(j, M.WATER);
+            else if (KIND[b] === K.fire && b !== M.ETERNAL) t[j] = 0; else if (b === M.LAVA) this.put(j, M.OBSIDIAN);
+          } else { // warms: boils water, melts ice (heat things like chocolate and wax melt by themselves)
+            if (b === M.WATER || b === M.SEAWATER) this.put(j, M.STEAM); else if (b === M.ICE || b === M.SNOW) this.put(j, M.WATER); else if (b === M.MUD) this.put(j, M.DIRT);
+          }
+          break;
+        }
+        case M.INK: {
+          if (rnd() > 0.06) break; // stains what it touches (the stain moves with water)
+          const d = ri(8), xx = x + NX[d], yy = y + NY[d]; if (xx < 0 || yy < 0 || xx >= w || yy >= h) break;
+          const j = yy * w + xx, b = t[j];
+          if (b && b !== M.INK && KIND[b] !== K.gas && KIND[b] !== K.fire && !PROOF[b]) { this.tint[j] = M.INK; this.hasTint = true; }
+          break;
+        }
         case M.LAVA:
           // Lava throws sparks of fire, and slowly cools to stone (sometimes metal).
           if (y > 0 && t[i - w] === 0 && rnd() < 0.006) { this.put(i - w, M.FIRE, 8 + ri(12)); this.stamp[i - w] = this.clock; }
@@ -1589,7 +1632,7 @@
        instead of falling. */
     float(i, x, y, m) {
       const t = this.t, w = this.w, h = this.h, life = this.life;
-      if (m !== M.FAIRY && (m === M.BUBBLE || (this.frame & 3) === 0) && life[i]-- <= 1) {
+      if (m !== M.FAIRY && m !== M.NEBULA && (m === M.BUBBLE || (this.frame & 3) === 0) && life[i]-- <= 1) {
         if (m === M.BUBBLE && rnd() < 0.3) this.put(i, M.WATER); else t[i] = 0;
         return;
       }
@@ -1700,6 +1743,10 @@
         const here = this.cellAt(c.x, c.y), A = ABIL[c.k];
         if (c.k === M.GHOST) { if (here === M.VOID) c.dead = 'void'; else this.ghost(c); continue; } // ghosts pass through everything
         if (c.k === M.STICKMAN && c.s === 9) { this.player(c, here); continue; } // knocked out
+        if ((here === M.QUICKSAND || (this.cellAt(c.x, c.y + 1) === M.QUICKSAND && !OPEN[here])) && c.k !== M.STICKMAN && c.k !== M.GHOST) { // stuck, and slowly swallowed
+          c.y += 0.03; if (this.cellAt(c.x, c.y - 2) === M.QUICKSAND && rnd() < 0.01) c.dead = 'crush';
+          continue;
+        }
         if (here === M.LN2) { c.dead = 'freeze'; continue; }
         const proof = A && A.fireproof, zapper = A && A.zaps;
         // Fire, lava, acid and the like are deadly; so is being buried or frozen solid.
@@ -1771,7 +1818,8 @@
     // Where each creature can be at all (anything else and it is buried).
     canBe(k, m) {
       if (m === 0 || OPEN[m]) return true;
-      if (k === M.STICKMAN && KIND[m] === K.liquid) return true; // he wades through any liquid (the nasty ones still hurt)
+      if (k === M.STICKMAN && KIND[m] === K.liquid) return true;
+      if (m === M.QUICKSAND) return true; // (it sinks in: see stepCreatures) // he wades through any liquid (the nasty ones still hurt)
       if (WATERY[m]) return true; // flyers drown in it, but it isn't solid
       if ((k === M.WORM || MOVE[k] === 'burrow') && SOIL[m]) return true;
       if (FIERY[m] && ABIL[k] && ABIL[k].fireproof) return true;
@@ -2314,6 +2362,10 @@
       if (keys.jump && ground && !wet && c.vy >= 0) c.vy = -1.55;
       else if (keys.jump && wet) c.vy = Math.max(c.vy - 0.12, -0.6);
       if (wet) c.vy = Math.min(c.vy + 0.03, 0.5) * 0.92; else if (!(ground && c.vy === 0)) c.vy = Math.min(c.vy + 0.12, 2.6);
+      if (here === M.QUICKSAND) { // wading through it is slow, and he sinks unless he keeps jumping
+        c.vx *= 0.25; c.vy = keys.jump && rnd() < 0.35 ? -0.6 : 0.06;
+        if (this.cellAt(c.x, c.y - 6) === M.QUICKSAND) { this.knockOut(c, 'void'); return; }
+      }
       // Sideways: blocked by anything as tall as him, but steps up bumps of 1 or 2 cells.
       const stepX = (dx) => {
         const nx = c.x + dx; if (nx < 1 || nx > w - 2) return false;
@@ -2568,8 +2620,9 @@
         if (CONDUCT[m] && life[i] > 0) { px[i] = SPARK_RGB; continue; }
         let s = sh[i] >> 4, cm = m;
         if (this.hasSkins) { const sk = this.skin[i]; if (sk && LIKE[sk] === m) cm = sk; }
-        if (m === M.FIRE) s = Math.max(0, 15 - Math.min(15, life[i] >> 1)) ;
-        else if (m === M.LAVA) s = (s + (fr >> 2)) & 15 ^ ((sh[i] & 1) ? 15 : 0);
+        if (m === M.FIRE) { s = Math.max(0, 15 - Math.min(15, life[i] >> 1)); if (this.fuel[i] === M.SULFUR) cm = M.COLDFIRE; } // sulfur burns blue
+        else if (m === M.LAVA || m === M.MOLTENGOLD) s = (s + (fr >> 2)) & 15 ^ ((sh[i] & 1) ? 15 : 0);
+        else if (m === M.MERCURY || m === M.GEODE) { if (((sh[i] + fr * 2) & 127) < 3) s = m === M.GEODE ? 0 : 2; }
         else if (m === M.CRYSTAL) { s = ((sh[i] >> 3) + (fr >> 2)) & 31; if (s > 15) s = 31 - s; }
         else if (m === M.LIGHTNING) s = (fr + i) & 1 ? 0 : 15;
         else if (m === M.COLDFIRE) s = Math.max(0, 15 - Math.min(15, life[i] >> 1));

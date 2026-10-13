@@ -51,11 +51,15 @@
     GRAVBOMB: 254, LN2: 255, SPONGE: 256, VIRUS: 257, CURE: 258, C4: 259, TNT: 260, THERMITE: 261,
     HYDROGEN: 262, OXYGEN: 263, PLUTONIUM: 264, ANTIMATTER: 265, VACUUM: 266, PORTALIN: 267, PORTALOUT: 268,
     BLACKHOLE: 269, WHITEHOLE: 270, STICKMAN: 271,
+    // Fourth wave: earth, chemistry, magical plants and space dust.
+    QUICKSAND: 272, PUMICE: 273, SULFUR: 274, MERCURY: 275, FERROFLUID: 276, MOLTENGOLD: 277, RESIN: 278, AMBER: 279,
+    AEROGEL: 280, EXPLJELLY: 281, METEORITE: 282, GEODE: 283, FIREFLOWER: 284, FROSTFERN: 285, ELECMUSH: 286,
+    GLOWMOSS: 287, LIQLIGHT: 288, INK: 289, NEBULA: 290, HEATCRYSTAL: 291,
   };
   // Ids from BUILTIN up to EXTRA-1, and from SLOTS2 up to COUNT-1, are kept free for things the AI
   // invents. The grid stores ids in 16 bits, so there's plenty of room: the third wave of built-ins
-  // lives at 254..279 and the second block of invention slots starts at 280.
-  const BUILTIN = 109, EXTRA = 225, SLOTS2 = 280, COUNT = 512;
+  // lives at 254..319 and the second block of invention slots starts at 320.
+  const BUILTIN = 109, EXTRA = 225, SLOTS2 = 320, COUNT = 512;
   const isSlot = (id) => (id >= BUILTIN && id < EXTRA) || (id >= SLOTS2 && id < COUNT);
 
   /* kind: how it moves.  density: heavier things sink through lighter
@@ -146,8 +150,8 @@
      two ingredients that meet inside a cauldron become something new. */
   def(M.CAULDRON, { key: 'cauldron', name: 'Cauldron', kind: 'solid', density: 9,
     colors: ['#4a4166', '#231f36'],
-    hint: 'A metal pot touched by a magic crystal…', recipe: 'Metal + Crystal',
-    desc: 'Unlocks the Brew pot: mix two things into magic.' });
+    hint: 'Always in your toolbar.', recipe: 'Always available',
+    desc: 'The Brew pot, next to your brush: mix things together into something new.' });
   def(M.SPARKLE, { key: 'sparkle', name: 'Sparkle', kind: 'spark', density: 0, hidden: true,
     ramp: ['#fff6c2', '#e9a8ff', '#ffd76b', '#b9a6ff'] });
   def(M.ESSENCE, { key: 'essence', name: 'Life Essence', kind: 'float', density: 0.1, magic: true,
@@ -631,6 +635,81 @@
               jump: [['.hhh.', '.hhh.', 'ksksk', '..k..', '..k..', '.k.k.', 'k...k', '.....']],
               down: [['.....', '.....', '.....', '.....', '.....', '.....', 'hh.k.', 'hhkkk']] } });
 
+  /* ---------------- Fourth wave ---------------- */
+  C(M.QUICKSAND, { key: 'quicksand', name: 'Quicksand', kind: 'liquid', density: 1.9, spread: 1,
+    colors: ['#d8b860', '#a8843a'], hint: 'Sand that got far too wet and swampy.', recipe: 'Sand + Swamp',
+    desc: 'Looks like sand, but anything heavy sinks into it, and creatures get slowly swallowed.' });
+  C(M.PUMICE, { key: 'pumice', name: 'Pumice', kind: 'powder', density: 0.7, slip: 0.6,
+    colors: ['#d8d0c4', '#a89c8c'], hint: 'Lava cooled in a hurry by water.', recipe: 'Lava + Water', also: 'Lava hitting water sometimes makes it too.',
+    desc: 'A light, bubbly stone. It floats on water.' });
+  C(M.SULFUR, { key: 'sulfur', name: 'Sulfur', kind: 'powder', density: 2, slip: 0.6, flam: 0.5, burn: 40,
+    colors: ['#fff06a', '#d8b820'], hint: 'What a volcano leaves behind: ash and lava.', recipe: 'Ash + Lava',
+    desc: 'Yellow powder that burns with a blue flame and gives off thick smoke.' });
+  SCI(M.MERCURY, { key: 'mercury', name: 'Mercury', kind: 'liquid', density: 13.6, spread: 3,
+    ramp: ['#e8eef4', '#9aa6b4', '#ffffff', '#6a7684'], hint: 'Liquid metal: metal that flows like water.', recipe: 'Metal + Water',
+    desc: 'A super heavy liquid metal. It sinks under every other liquid, sand floats on it, and it carries electricity.',
+    props: { conducts: true } });
+  SCI(M.FERROFLUID, { key: 'ferrofluid', name: 'Ferrofluid', kind: 'liquid', density: 1.5, spread: 2,
+    ramp: ['#1a1a24', '#2a2a3a', '#0a0a10', '#4a4a64'], hint: 'Iron so fine it dissolved in oil.', recipe: 'Iron Filings + Oil',
+    desc: 'A black liquid that magnets pull into clumps.',
+    props: { attracted: true } });
+  SCI(M.MOLTENGOLD, { key: 'moltengold', name: 'Molten Gold', kind: 'liquid', density: 8, spread: 2,
+    colors: ['#fff0a0', '#ffb020'], hint: 'Gold melted by something even hotter than fire.', recipe: 'Gold + Lava', also: 'Gold that touches lava melts too.',
+    desc: 'Glowing liquid gold. It cools back into gold, fast on ice.',
+    props: { glow: [255, 200, 80], sets: [M.GOLD, 0.0015], freezes: [M.GOLD, 0.1] } });
+  SCI(M.RESIN, { key: 'resin', name: 'Resin', kind: 'liquid', density: 1.3, spread: 1, flam: 0.3, burn: 60,
+    colors: ['#ffb040', '#c87010'], alpha: 230, hint: 'Sticky stuff that oozes from trees: wood and something sweet.', recipe: 'Wood + Honey',
+    desc: 'Thick and sticky: grains that touch it get stuck. Slowly hardens into amber.',
+    props: { sticky: true, sets: [M.AMBER, 0.0006] } });
+  SCI(M.AMBER, { key: 'amber', name: 'Amber', kind: 'solid', density: 4,
+    colors: ['#ffc860', '#d8801a'], alpha: 210, hint: 'Leave some resin to harden for a long time.', recipe: 'Resin hardening',
+    desc: 'Golden, glassy and see-through. Hardened resin that glows softly.',
+    props: { glow: [255, 170, 60] } });
+  SCI(M.AEROGEL, { key: 'aerogel', name: 'Aerogel', kind: 'powder', density: 0.08, slip: 0.9,
+    colors: ['#e8f4ff', '#b8d4f0'], alpha: 140, hint: 'Glass so light it\u2019s mostly cloud.', recipe: 'Glass + Cloud',
+    desc: 'The lightest solid there is: it drifts down very slowly, like a feather.' });
+  SCI(M.EXPLJELLY, { key: 'expljelly', name: 'Explosive Jelly', kind: 'liquid', density: 1.2, spread: 1, flam: 1, burn: 1,
+    ramp: ['#ff6a8a', '#ff3a5a', '#ffa0b8', '#d81a3a'], alpha: 235, hint: 'Slime mixed with something that goes boom.', recipe: 'Slime + Gunpowder',
+    desc: 'Wobbly jelly that sticks to walls, and explodes the moment fire or a spark touches it.',
+    props: { sticky: true, volatile: true } });
+  SPACE(M.METEORITE, { key: 'meteorite', name: 'Meteorite', kind: 'powder', density: 9, slip: 0.3,
+    ramp: ['#5a4a42', '#3a302a', '#8a6a52', '#2a2220'], hint: 'A falling star that turned to stone.', recipe: 'Star + Stone',
+    desc: 'A heavy space rock. It falls fast, trailing sparks, and the farther it falls the bigger the crash.' });
+  C(M.GEODE, { key: 'geode', name: 'Geode', kind: 'solid', density: 8,
+    colors: ['#8a8478', '#5e5a52'], hint: 'A stone with a crystal seed hidden inside.', recipe: 'Stone + Crystal Seed',
+    desc: 'Looks like a plain rock, but blow it up and it breaks open into crystals.' });
+  def(M.FIREFLOWER, { key: 'fireflower', name: 'Fire Flower', kind: 'solid', density: 4, magic: true,
+    ramp: ['#ff5a1a', '#ffd23a', '#ff8a2a', '#ff3a1a'], hint: 'A flower that loves the heat.', recipe: 'Flower + Fire',
+    desc: 'A glowing flower that never burns. Now and then it sends up little sparks of fire.',
+    props: { glow: [255, 140, 60] } });
+  def(M.FROSTFERN, { key: 'frostfern', name: 'Frost Fern', kind: 'solid', density: 4, magic: true, flam: 0.05, burn: 20,
+    colors: ['#c8f4ff', '#5ab8d8'], hint: 'A plant that grew in the ice.', recipe: 'Plant + Ice',
+    desc: 'A frosty plant that freezes water around it and puts out flames.',
+    props: { cold: true } });
+  def(M.ELECMUSH, { key: 'elecmush', name: 'Electric Mushroom', kind: 'solid', density: 4, magic: true,
+    ramp: ['#6ab8ff', '#e8f4ff', '#3a6aff', '#a8d8ff'], hint: 'A mushroom struck by lightning.', recipe: 'Mushroom + Lightning',
+    desc: 'Glows blue and sends a pulse of electricity into copper, metal or anything that burns next to it.',
+    props: { power: true, glow: [120, 190, 255] } });
+  def(M.GLOWMOSS, { key: 'glowmoss', name: 'Glow Moss', kind: 'solid', density: 4, magic: true, flam: 0.05, burn: 30,
+    colors: ['#8affa0', '#2a9a4a'], hint: 'Moss that soaked up a glowing stone.', recipe: 'Moss + Glowstone',
+    desc: 'Glowing moss. It creeps over damp stone like normal moss.',
+    props: { glow: [120, 255, 150] } });
+  def(M.LIQLIGHT, { key: 'liqlight', name: 'Liquid Light', kind: 'liquid', density: 0.9, spread: 4, magic: true,
+    colors: ['#fffbe0', '#ffe88a'], alpha: 220, hint: 'Water that drank a glowing stone.', recipe: 'Water + Glowstone',
+    desc: 'A glowing liquid that lights up everything around it.',
+    props: { glow: [255, 245, 190] } });
+  SCI(M.INK, { key: 'ink', name: 'Ink', kind: 'liquid', density: 1.05, spread: 4,
+    colors: ['#2a2a5a', '#0a0a24'], alpha: 245, hint: 'Water mixed with black charcoal.', recipe: 'Water + Charcoal',
+    desc: 'Dark blue ink. It stains water and whatever it touches.' });
+  SPACE(M.NEBULA, { key: 'nebula', name: 'Nebula Dust', kind: 'float', density: 0.1,
+    ramp: ['#ff7ad8', '#8a7aff', '#5ad8ff', '#d87aff'], alpha: 200, hint: 'Stardust spread out into a cloud.', recipe: 'Stardust + Cloud',
+    desc: 'Colorful space dust that drifts about and never settles.',
+    props: { glow: [200, 140, 255] } });
+  def(M.HEATCRYSTAL, { key: 'heatcrystal', name: 'Heat Crystal', kind: 'solid', density: 8, magic: true,
+    ramp: ['#ff8a4a', '#ffd08a', '#ff5a2a', '#ffb06a'], hint: 'A crystal soaked in lava.', recipe: 'Crystal + Lava',
+    desc: 'Always warm: it boils water, melts ice, chocolate and wax around it, but never sets anything on fire.',
+    props: { glow: [255, 130, 70] } });
+
   /* Cauldron recipes: unordered pairs of ingredients. */
   const MAGIC = new Uint16Array(COUNT * COUNT);
   function brew(a, b, out) { MAGIC[a * COUNT + b] = out; MAGIC[b * COUNT + a] = out; }
@@ -764,6 +843,26 @@
   brew(M.BLACKHOLE, M.MIRROR, M.WHITEHOLE);
   brew(M.BLACKHOLE, M.GUNPOWDER, M.GRAVBOMB);
   brew(M.PAPER, M.ESSENCE, M.STICKMAN);
+  // Fourth wave
+  brew(M.SAND, M.SWAMP, M.QUICKSAND);
+  brew(M.LAVA, M.WATER, M.PUMICE);
+  brew(M.ASH, M.LAVA, M.SULFUR);
+  brew(M.METAL, M.WATER, M.MERCURY);
+  brew(M.IRON, M.OIL, M.FERROFLUID);
+  brew(M.GOLD, M.LAVA, M.MOLTENGOLD);
+  brew(M.WOOD, M.HONEY, M.RESIN);
+  brew(M.GLASS, M.CLOUD, M.AEROGEL);
+  brew(M.SLIME, M.GUNPOWDER, M.EXPLJELLY);
+  brew(M.STAR, M.STONE, M.METEORITE);
+  brew(M.STONE, M.CRYSTALSEED, M.GEODE);
+  brew(M.FLOWER, M.FIRE, M.FIREFLOWER);
+  brew(M.PLANT, M.ICE, M.FROSTFERN);
+  brew(M.MUSHROOM, M.LIGHTNING, M.ELECMUSH);
+  brew(M.MOSS, M.GLOWSTONE, M.GLOWMOSS);
+  brew(M.WATER, M.GLOWSTONE, M.LIQLIGHT);
+  brew(M.WATER, M.CHARCOAL, M.INK);
+  brew(M.STARDUST, M.CLOUD, M.NEBULA);
+  brew(M.CRYSTAL, M.LAVA, M.HEATCRYSTAL);
 
   /* ---------------- Mixing by traits ----------------
      Any pair without its own recipe still makes something sensible, worked
@@ -804,6 +903,10 @@
     [M.TNT]: 'boom', [M.C4]: 'boom earth', [M.THERMITE]: 'hot metal', [M.PLUTONIUM]: 'hot metal magic', [M.ANTIMATTER]: 'void',
     [M.VACUUM]: 'void', [M.PORTALIN]: 'magic void', [M.PORTALOUT]: 'magic', [M.BLACKHOLE]: 'void', [M.WHITEHOLE]: 'magic air',
     [M.GRAVBOMB]: 'boom magic', [M.STICKMAN]: 'life',
+    [M.QUICKSAND]: 'earth sandy wet', [M.PUMICE]: 'earth', [M.SULFUR]: 'earth fuel', [M.MERCURY]: 'metal wet', [M.FERROFLUID]: 'metal wet',
+    [M.MOLTENGOLD]: 'hot metal magic', [M.RESIN]: 'life wet fuel', [M.AMBER]: 'earth magic', [M.AEROGEL]: 'air earth', [M.EXPLJELLY]: 'boom wet',
+    [M.METEORITE]: 'hot earth metal', [M.GEODE]: 'earth magic', [M.FIREFLOWER]: 'life hot magic', [M.FROSTFERN]: 'life cold', [M.ELECMUSH]: 'life magic',
+    [M.GLOWMOSS]: 'life magic', [M.LIQLIGHT]: 'wet magic', [M.INK]: 'wet', [M.NEBULA]: 'air magic', [M.HEATCRYSTAL]: 'hot magic earth',
   };
   const T = {};
   for (const k in TRAITS) T[k] = new Set(TRAITS[k].split(' '));
@@ -854,7 +957,7 @@
   // Water and heat
   rx(M.WATER, M.FIRE, 0.45, M.STEAM, E, { p: 0.05, a: M.SALT });
   rx(M.WATER, M.LAVA, 0.5, M.STEAM, M.OBSIDIAN);
-  rx(M.LAVA, M.WATER, 0.5, M.OBSIDIAN, M.STEAM);
+  rx(M.LAVA, M.WATER, 0.5, M.OBSIDIAN, M.STEAM, { p: 0.1, a: M.PUMICE }); // now and then it cools into bubbly pumice
   rx(M.FIRE, M.WATER, 0.5, E, M.STEAM, null);
   // Melting and baking
   rx(M.FIRE, M.SAND, 0.012, KEEP, M.GLASS);
@@ -941,6 +1044,9 @@
   // Third wave in the world
   [M.SPONGE, M.TNT, M.C4, M.THERMITE].forEach((b) => rx(M.ACID, b, 0.08, KEEP, E));
   rx(M.CURE, M.ACID, 0.05, KEEP, M.WATER);
+  // Fourth wave in the world
+  rx(M.LAVA, M.GOLD, 0.03, KEEP, M.MOLTENGOLD);   // gold melts in lava
+  [M.SULFUR, M.RESIN, M.AMBER, M.GEODE, M.FERROFLUID, M.EXPLJELLY, M.PUMICE, M.FIREFLOWER, M.FROSTFERN, M.ELECMUSH, M.GLOWMOSS, M.AEROGEL].forEach((b) => rx(M.ACID, b, 0.08, KEEP, E));
 
   // Things that set flammable neighbours alight.
   const IGNITERS = new Set([M.FIRE, M.LAVA, M.LIGHTNING, M.ETERNAL, M.EMBER, M.PLASMA, M.ROCKET]);
