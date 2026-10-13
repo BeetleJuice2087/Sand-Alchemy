@@ -1775,6 +1775,7 @@
           continue;
         }
         if (here === M.LN2) { c.dead = 'freeze'; continue; }
+        if (c.tv && c.k !== M.STICKMAN) { this.tumble(c, here); if (c.tv || c.dead) continue; } // flying out of a portal
         const proof = A && A.fireproof, zapper = A && A.zaps;
         // Fire, lava, acid and the like are deadly; so is being buried or frozen solid.
         // Creatures that zap are safe in their own lightning.
@@ -1819,9 +1820,12 @@
           if (c.pcd > 0) c.pcd--;
           else {
             const tall = c.k === M.STICKMAN ? 6 : 1;
-            let hit = this.cellAt(c.x, c.y + 1) === M.PORTALIN;
-            for (let up = 0; up <= tall && !hit; up += 3) hit = this.cellAt(c.x + 1, c.y - up) === M.PORTALIN || this.cellAt(c.x - 1, c.y - up) === M.PORTALIN;
-            if (hit) { const q = this.exitCell(); if (q >= 0) { c.x = q % this.w; c.y = (q / this.w) | 0; c.pcd = 25; c.fallFrom = c.y; } }
+            let dx = 0, dy = this.cellAt(c.x, c.y + 1) === M.PORTALIN ? 1 : 0;
+            for (let up = 0; up <= tall && !dy && !dx; up += 3) dx = this.cellAt(c.x + 1, c.y - up) === M.PORTALIN ? 1 : this.cellAt(c.x - 1, c.y - up) === M.PORTALIN ? -1 : 0;
+            if (dx || dy) { // in it goes, and out it comes still moving the same way, a little faster
+              const sp = c.tv ? Math.hypot(c.tv[0], c.tv[1]) : c.k === M.STICKMAN ? Math.hypot(c.vx || 0, c.vy || 0) : Math.abs(c.vy || 0);
+              this.portalJump(c, dx, dy, Math.max(1, sp));
+            }
           }
         }
       }
@@ -2370,6 +2374,31 @@
        The one creature you steer: this.keys = { left, right, jump } comes from the game (keyboard or the
        on-screen buttons). He walks, steps up little bumps, jumps, swims, and a long fall knocks him out;
        so do fire, lava, acid and blasts. After a moment he comes back where he was placed. */
+    /* A creature goes through a portal: it comes out of a Portal Out moving the way it was going, a bit faster. */
+    portalJump(c, dx, dy, speed) {
+      const q = this.exitCell(dx, dy); if (q < 0) return false;
+      const n = Math.hypot(dx, dy) || 1, sp = Math.min(9, speed + 0.25);
+      c.x = q % this.w; c.y = (q / this.w) | 0; c.pcd = 4; c.fallFrom = c.y;
+      if (c.k === M.STICKMAN) { c.vx = dx / n * sp; c.vy = dy / n * sp; c.pz = 1; c.air = true; }
+      else { c.tv = [dx / n * sp, dy / n * sp]; c.tt = 0; }
+      return true;
+    }
+    /* Flying through the air after a portal: gravity pulls it down until it lands (or swims, or flies off again). */
+    tumble(c, here) {
+      const v = c.tv, w = this.w, h = this.h;
+      if (WATERY[here]) { c.tv = null; c.vy = 0; return; } // splash
+      const flier = MOVE[c.k] === 'fly' || MOVE[c.k] === 'flutter' || MOVE[c.k] === 'drift' || c.k === M.BIRD || c.k === M.BEE || c.k === M.FIREFLY || c.k === M.BUTTERFLY || c.k === M.DRAGON;
+      if (flier && ++c.tt > 25) { c.tv = null; return; } // it spreads its wings
+      v[1] = Math.min(v[1] + 0.16, 9); v[0] *= 0.99;
+      if (Math.abs(v[0]) > 0.01) c.dir = v[0] > 0 ? 1 : -1;
+      const n = Math.max(1, Math.ceil(Math.max(Math.abs(v[0]), Math.abs(v[1]))));
+      for (let k = 0; k < n; k++) {
+        const nx = c.x + v[0] / n, ny = c.y + v[1] / n, m = this.cellAt(nx, ny);
+        if (m === M.PORTALIN && this.portOut && this.portOut.length && this.portalJump(c, v[0], v[1], Math.hypot(v[0], v[1]))) return;
+        if (!this.canBe(c.k, m)) { c.tv = null; c.vy = 0; c.y = Math.round(c.y); return; } // landed
+        c.x = Math.max(1, Math.min(w - 2, nx)); c.y = Math.max(0, Math.min(h - 1, ny));
+      }
+    }
     player(c, here) {
       const keys = this.keys || {}, w = this.w;
       if (c.s === 9) { if (--c.ko <= 0) this.respawn(c); return; }
@@ -2378,17 +2407,20 @@
       const wet = KIND[here] === K.liquid;
       const ground = solidAt(c.x, c.y + 1);
       if (c.fallFrom === undefined) c.fallFrom = c.y;
+      if (ground && c.vy > 0 && !(c.pcd > 0) && this.portOut && this.portOut.length && this.cellAt(c.x, c.y + 1) === M.PORTALIN && this.portalJump(c, 0, 1, c.vy)) return; // through, keeping his speed
       if (ground && !wet && c.vy >= 0) { // standing (or just landed)
+        if (c.pz && c.vy > 6.5) { c.pz = 0; c.y = Math.round(c.y); c.vy = 0; c.air = false; this.knockOut(c, 'fall'); return; } // a portal-speed crash
+        c.pz = 0;
         if (c.air && c.y - c.fallFrom > 22 && c.landed) { c.y = Math.round(c.y); c.air = false; this.knockOut(c, 'fall'); return; }
         c.y = Math.round(c.y); c.vy = 0; c.air = false; c.landed = true; // the first drop after you place him never hurts
       }
       if (ground || wet) c.fallFrom = c.y; else c.fallFrom = Math.min(c.fallFrom, c.y); // the highest point of a jump or fall
       const want = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
       if (want) c.dir = want;
-      c.vx += (want * (wet ? 0.3 : 0.55) - c.vx) * (ground ? 0.35 : 0.12);
+      c.vx += (want * (wet ? 0.3 : 0.55) - c.vx) * (ground ? 0.35 : c.pz ? 0.02 : 0.12); // out of a portal he keeps his momentum
       if (keys.jump && ground && !wet && c.vy >= 0) c.vy = -1.55;
       else if (keys.jump && wet) c.vy = Math.max(c.vy - 0.12, -0.6);
-      if (wet) c.vy = Math.min(c.vy + 0.03, 0.5) * 0.92; else if (!(ground && c.vy === 0)) c.vy = Math.min(c.vy + 0.12, 2.6);
+      if (wet) { c.vy = Math.min(c.vy + 0.03, 0.5) * 0.92; c.pz = 0; } else if (!(ground && c.vy === 0)) c.vy = Math.min(c.vy + 0.12, c.pz ? 9 : 2.6);
       if (here === M.QUICKSAND) { // wading through it is slow, and he sinks unless he keeps jumping
         c.vx *= 0.25; c.vy = keys.jump && rnd() < 0.35 ? -0.6 : 0.06;
         if (this.cellAt(c.x, c.y - 6) === M.QUICKSAND) { this.knockOut(c, 'void'); return; }
@@ -2409,6 +2441,9 @@
       for (let k = 0; k < n; k++) {
         const ny = c.y + dy;
         if (dy > 0 && Math.round(ny) !== Math.round(c.y) && solidAt(c.x, ny)) { // landed
+          if (this.cellAt(c.x, ny) === M.PORTALIN && this.portOut && this.portOut.length && this.portalJump(c, 0, 1, c.vy)) return;
+          if (c.pz && c.vy > 6.5) { c.pz = 0; c.y = Math.round(c.y); c.vy = 0; c.air = false; this.knockOut(c, 'fall'); return; }
+          c.pz = 0;
           c.y = Math.round(c.y); c.vy = 0; c.air = false;
           if (!wet && c.y - c.fallFrom > 22 && c.landed) this.knockOut(c, 'fall');
           c.landed = true;
