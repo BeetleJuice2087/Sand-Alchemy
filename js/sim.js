@@ -617,7 +617,7 @@
       const H = this.holes, bh = H ? H.bhC : null, wh = H ? H.whC : null;
       flight: for (const p of list) {
         if (p.zg > 0) p.zg--; // spat out of a white hole: floats like space dust for a while
-        else { p.vy = Math.min(p.vy + 0.16, 6); p.vx *= 0.985; }
+        else { p.vy = Math.min(p.vy + 0.16, p.pz ? 9 : 6); p.vx *= 0.985; } // portal loops can go faster
         if (H) { // gravity: black holes pull grains in (they curve and orbit), white holes push them away
           for (const b of bh) { // pull grows with the hole's size
             const dx = b.x - p.x, dy = b.y - p.y, d2 = dx * dx + dy * dy + 1;
@@ -646,8 +646,13 @@
             const b = cy < h ? t[cy * w + cx] : 0;
             if (b === M.BLACKHOLE) { this.swallowed(p.m, p.sk); continue flight; }
             if (b === M.VACUUM) continue flight;                                 // sucked away
-            if (b === M.PORTALIN && this.portOut && this.portOut.length) {          // out of a Portal Out, still flying
-              const q = this.exitCell(); if (q >= 0) { p.x = q % w; p.y = (q / w) | 0; break; }
+            if (b === M.PORTALIN && this.portOut && this.portOut.length) {          // out of a Portal Out, keeping its speed (plus a little)
+              const q = this.exitCell(p.vx, p.vy);
+              if (q >= 0) {
+                const sp = Math.min(9, Math.hypot(p.vx, p.vy) + 0.25), v0 = Math.hypot(p.vx, p.vy) || 1;
+                p.x = q % w; p.y = (q / w) | 0; p.vx = p.vx / v0 * sp; p.vy = p.vy / v0 * sp; p.pz = 1; // same direction, a bit faster
+                break;
+              }
             }
             landed = true; break;
           }
@@ -680,23 +685,41 @@
     }
     swallow(j) { this.swallowed(this.t[j], this.hasSkins ? this.skin[j] : 0); this.t[j] = 0; this.skin[j] = 0; if (this.hasTint) this.tint[j] = 0; }
     // An empty cell right next to a random Portal Out (-1 if there isn't one).
-    exitCell() {
-      const L = this.portOut, w = this.w, h = this.h, t = this.t;
-      for (let tries = 0; tries < 6; tries++) {
+    // With a direction (dx, dy), it picks the side that keeps things moving the same way (fall into a floor
+    // portal, come out of a ceiling portal still falling). this.exitDir is the side it came out of.
+    exitCell(dx, dy) {
+      const L = this.portOut, w = this.w, h = this.h, t = this.t, aim = dx || dy;
+      if (aim) { const n = Math.hypot(dx, dy); dx /= n; dy /= n; }
+      let best = -1, bestScore = -9, bestD = 0;
+      for (let tries = 0; tries < (aim ? 12 : 6); tries++) {
         const o = L[ri(L.length)]; if (t[o] !== M.PORTALOUT) continue;
         const ox = o % w, oy = (o / w) | 0, s0 = ri(8);
         for (let k = 0; k < 8; k++) {
           const d = (s0 + k) & 7, xx = ox + NX[d], yy = oy + NY[d];
           if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-          const q = yy * w + xx; if (t[q] === 0) return q;
+          const q = yy * w + xx; if (t[q] !== 0) continue;
+          if (!aim) { this.exitDir = d; return q; }
+          const score = (NX[d] * dx + (NY[d] * dy) + NY[d] * 0.4) / Math.hypot(NX[d], NY[d]) + rnd() * 0.05; // (things fall, so lean downwards)
+          if (score > bestScore) { bestScore = score; best = q; bestD = d; }
         }
+        if (bestScore > 1.3) break; // found a side facing straight the right way
       }
-      return -1;
+      if (aim && bestScore < 0.3) return -1; // that side is blocked right now: wait rather than shoot out backwards
+      if (best >= 0) this.exitDir = bestD;
+      return best;
     }
-    // Move cell j out of a Portal Out.
-    teleport(j) {
-      const q = this.exitCell(); if (q < 0) return false;
-      const t = this.t;
+    // Move cell j out of a Portal Out. (dx, dy) is the way it was going: grains and liquids come out
+    // flying that way, so a floor portal under a ceiling portal makes them fall faster and faster.
+    teleport(j, dx, dy) {
+      const q = this.exitCell(dx, dy); if (q < 0) return false;
+      const t = this.t, k = KIND[t[j]];
+      if ((k === K.powder || k === K.liquid) && this.flying.length < 4000 && !BOUNCE[t[j]]) {
+        const d = this.exitDir, n = (dx || dy) ? Math.hypot(dx, dy) : Math.hypot(NX[d], NY[d]), sp = 1.4;
+        const ux = (dx || dy) ? dx / n : NX[d] / n, uy = (dx || dy) ? dy / n : NY[d] / n;
+        this.flying.push({ m: t[j], sk: this.hasSkins ? this.skin[j] : 0, l: this.life[j], s: this.shade[j], x: q % this.w, y: (q / this.w) | 0, vx: ux * sp, vy: uy * sp, wt: 1, pz: 1 });
+        t[j] = 0; this.skin[j] = 0; this.life[j] = 0; this.fuel[j] = 0; if (this.hasTint) this.tint[j] = 0;
+        return true;
+      }
       t[q] = t[j]; this.life[q] = this.life[j]; this.shade[q] = this.shade[j]; this.fuel[q] = this.fuel[j]; this.skin[q] = this.skin[j];
       if (this.hasTint) { this.tint[q] = this.tint[j]; this.tint[j] = 0; }
       t[j] = 0; this.skin[j] = 0; this.life[j] = 0; this.fuel[j] = 0;
@@ -1489,7 +1512,11 @@
             const d = ri(8), xx = x + NX[d], yy = y + NY[d];
             if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
             const j = yy * w + xx, b = t[j], kb = KIND[b];
-            if (b && (kb === K.powder || kb === K.liquid || kb === K.gas || kb === K.fire || kb === K.float || kb === K.skypowder || kb === K.spark)) this.teleport(j);
+            if (!b) continue;
+            if (kb === K.powder || kb === K.liquid) { // falling things go in from above (heading down) or from the side
+              if (NY[d] > 0) continue;
+              this.teleport(j, NY[d] < 0 ? 0 : -NX[d], NY[d] < 0 ? 1 : 0);
+            } else if (kb === K.gas || kb === K.fire || kb === K.float || kb === K.skypowder || kb === K.spark) this.teleport(j, 0, 0);
           }
           break;
         }
@@ -2673,8 +2700,13 @@
       // Grains flying through the air after an explosion.
       for (const p of this.flying) {
         const x = Math.round(p.x), y = Math.round(p.y); if (x < 0 || y < 0 || x >= this.w || y >= this.h) continue;
-        const cm = p.sk && LIKE[p.sk] === p.m ? p.sk : p.m;
-        px[y * this.w + x] = C[cm * 16 + (p.s >> 4)];
+        const cm = p.sk && LIKE[p.sk] === p.m ? p.sk : p.m, col = C[cm * 16 + (p.s >> 4)];
+        px[y * this.w + x] = col;
+        const sp = Math.abs(p.vx) + Math.abs(p.vy);
+        if (sp > 3.5) { // going fast: a little streak behind it
+          const n = Math.min(4, Math.floor(sp / 2)), ux = p.vx / sp, uy = p.vy / sp;
+          for (let k = 1; k <= n; k++) { const tx = Math.round(p.x - ux * k * 1.5), ty = Math.round(p.y - uy * k * 1.5); if (tx >= 0 && ty >= 0 && tx < this.w && ty < this.h && this.t[ty * this.w + tx] === 0) px[ty * this.w + tx] = ((Math.max(40, 200 - k * 45) << 24) | (col & 0xffffff)) >>> 0; }
+        }
       }
       // Darkness: a shadowy patch around anything with the darkness effect.
       if (this.darkAt && this.frame - this.darkAt < 6) {
