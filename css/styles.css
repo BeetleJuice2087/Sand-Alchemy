@@ -92,7 +92,7 @@ svg .fill { fill: currentColor; stroke: none; }
 .sheet-head h2 { flex: 1; }
 .sheet-count { color: var(--gold); font-weight: 800; }
 .sheet-lede { color: var(--muted); margin: 12px 0 14px; line-height: 1.4; }
-.book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: 8px; }
 .book-section { grid-column: 1 / -1; margin: 10px 0 2px; font-family: var(--font-display); font-size: 0.95rem; }
 .book-section small { display: block; margin-top: 3px; font-family: var(--font-body); font-weight: 600; font-size: 0.78rem; color: var(--muted); }
 .book-section:first-child { margin-top: 0; }
@@ -364,11 +364,11 @@ html, body { overflow-x: hidden; }
 .mat.is-fav::before { content: '\2605'; position: absolute; top: 2px; left: 5px; font-size: 10px; line-height: 1; color: var(--gold); }
 .mat { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
 .card.has-fav { position: relative; padding-right: 36px; }
-.card.has-fav.has-del { padding-right: 36px; min-height: 76px; }
+.card.has-fav.has-del { padding-right: 68px; }
 .card-fav { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--muted);
   display: grid; place-items: center; cursor: pointer; padding: 0; font-size: 15px; line-height: 1; }
 .card-fav.on { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 60%, var(--line)); }
-.card.has-del .card-fav { top: 38px; } /* under the delete button */
+.card.has-del .card-fav { right: 38px; } /* beside the delete button */
 
 /* Reveal: for ??? cards you're stuck on */
 .card-reveal { display: block; margin-top: 6px; padding: 4px 12px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--gold) 55%, var(--line));

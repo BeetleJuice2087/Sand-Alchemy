@@ -22,11 +22,9 @@
     M.POTION, M.GHOSTFIRE, M.FROSTCRYSTAL, M.CRYSTALSEED, M.FROSTBOMB, M.PLASMA,
     M.FISH, M.BIRD, M.WORM, M.FIREFLY, M.FROG, M.BEE, M.ANT, M.SNAIL, M.LIZARD, M.PENGUIN, M.CRAB,
     M.DRAGON, M.COW, M.SNAKE, M.RABBIT, M.JELLYFISH, M.GHOST, M.TADPOLE, M.CATERPILLAR, M.BUTTERFLY, M.EGG,
-    M.HOUSE, M.VOLCANO, M.CHEST, M.SNOWMAN, M.CAMPFIRE, M.CASTLE,
     M.GLOWSTONE, M.GLUE, M.BOUNCY, M.IRON, M.MAGNET, M.COPPER, M.BATTERY, M.DRYICE, M.NITRO, M.CHOCOLATE, M.MELTCHOC, M.CORAL,
     M.SUGAR, M.CARAMEL, M.CANDY, M.COTTONCANDY, M.WAX, M.MELTWAX, M.PAPER, M.TAR, M.SOAP, M.STEEL, M.GLITTER, M.NEON, M.PEARL,
     M.OWL, M.BAT, M.TURTLE, M.MOUSE, M.OCTOPUS, M.PHOENIX, M.UNICORN, M.DUCK, M.WALL, M.WEB,
-    M.LIGHTHOUSE, M.PYRAMID, M.IGLOO, M.CANDLE, M.FOUNTAIN, M.GINGERBREAD,
     M.HYDROGEN, M.OXYGEN, M.LN2, M.SPONGE, M.VIRUS, M.CURE, M.TNT, M.C4, M.THERMITE, M.PLUTONIUM, M.ANTIMATTER,
     M.VACUUM, M.PORTALIN, M.PORTALOUT, M.BLACKHOLE, M.WHITEHOLE, M.GRAVBOMB, M.STICKMAN,
     M.QUICKSAND, M.PUMICE, M.SULFUR, M.MERCURY, M.FERROFLUID, M.MOLTENGOLD, M.RESIN, M.AMBER, M.AEROGEL, M.EXPLJELLY,
@@ -46,7 +44,6 @@
     { label: 'Science', items: ORDER.filter((m) => MATS[m].science).sort(byName) },
     { label: 'Space', items: ORDER.filter((m) => MATS[m].space).sort(byName) },
     { label: 'Creatures', items: ORDER.filter((m) => MATS[m].creature).sort(byName) },
-    { label: 'Objects', items: ORDER.filter((m) => MATS[m].object).sort(byName) },
   ];
   function groupLabel(text, cls) { const el = document.createElement(cls === 'grp' ? 'span' : 'h3'); el.className = cls; el.textContent = text; return el; }
 
@@ -63,7 +60,7 @@
   let favs = [];
   try { const f = JSON.parse(localStorage.getItem(FAV_KEY) || '[]'); if (Array.isArray(f)) favs = f.filter((m) => m > 0 && m < COUNT); } catch (e) { /* ignore */ }
   const isFav = (m) => favs.includes(m);
-  const favItems = () => favs.filter((m) => MATS[m] && !MATS[m].reserved && world && world.discovered[m]);
+  const favItems = () => favs.filter((m) => MATS[m] && !MATS[m].reserved && !MATS[m].hidden && world && world.discovered[m]);
   let favAt = 0, favLast = 0;
   function toggleFav(m) {
     if (!(m > 0 && m < COUNT)) return;
@@ -361,7 +358,7 @@
   }
   function countFound() {
     let n = 0; ORDER.forEach((m) => { if (world.discovered[m]) n++; });
-    for (let m = 1; m < COUNT; m++) if (MATS[m].invented && world.discovered[m]) n++; // AI inventions count too
+    for (let m = 1; m < COUNT; m++) if (MATS[m].invented && !MATS[m].hidden && world.discovered[m]) n++; // AI inventions count too
     return n;
   }
   function renderCount() {
@@ -968,6 +965,9 @@
       if (parts) MULTI.set(multiKey(parts), same); else { MAGIC[a * COUNT + b] = same; MAGIC[b * COUNT + a] = same; }
       return same;
     }
+    // Objects are out of the game: if the AI still dreams one up (or an old one comes back from the shared
+    // store), it becomes a solid element of the same name instead.
+    if (!rec.id && rec.spec && rec.spec.type === 'object') rec = Object.assign({}, rec, { spec: Object.assign({}, rec.spec, { type: 'element', state: 'solid', behaves_like: 'none' }) });
     const entry = buildEntry(rec.spec, a, b, parts); if (!entry) return 0;
     const id = isSlot(rec.id) && MATS[rec.id].reserved ? rec.id : freeSlot(); if (!id) return 0;
     if (entry.layEgg) entry.abil.lays = [id, 0.0005];
@@ -975,6 +975,11 @@
     if (parts) MULTI.set(multiKey(parts), id);
     window.SandSim.refresh(id);
     inventions = inventions.filter((r) => r.id !== id).concat([parts ? { id, a, b, parts, spec: rec.spec } : { id, a, b, spec: rec.spec }]);
+    if (entry.object) { // an object invented before they were taken out: kept hidden (things brewed from it still work), but gone from the game
+      MATS[id].hidden = true; MATS[id].retired = true;
+      if (parts) MULTI.delete(multiKey(parts)); else { MAGIC[a * COUNT + b] = 0; MAGIC[b * COUNT + a] = 0; }
+      return id;
+    }
     if (!INV_GROUP.items.includes(id)) INV_GROUP.items.push(id);
     INV_GROUP.items.sort(byName);
     return id;
@@ -1057,19 +1062,14 @@
     const MOVES = ['walk', 'climb', 'slither', 'wade', 'fly', 'swim', 'hop', 'leap', 'flutter', 'burrow', 'drift', 'egg', 'paddle', 'amphibian'];
     const EFFECTS = ['wind', 'freeze', 'sparks', 'fog', 'burn', 'melt', 'corrode', 'rain', 'grow', 'plants', 'bloom', 'web', 'paint', 'slime', 'pull', 'push', 'levitate', 'shake', 'petrify', 'crystal', 'rust', 'heat', 'sponge', 'purify', 'bubbles', 'teleport', 'sparkles', 'life', 'rainbow', 'vortex', 'orbit', 'bounce', 'pulse', 'splash', 'erupt', 'disintegrate', 'transmute', 'duplicate', 'absorb', 'dissolve', 'liquefy', 'contaminate', 'decay', 'ferment', 'extinguish', 'condense', 'fungus', 'regen', 'germinate', 'darkness', 'magnetize', 'chain'];
     const ABILITIES = ['breathes_fire', 'glows', 'fireproof', 'grazes', 'lays_eggs', 'eats_bugs', 'eats_fish', 'scared_of_fire', 'leaves_trail', 'fast', 'slow', 'zaps', 'explodes'];
-    // Materials an object can be built from (names must match the game).
     // Built-in elements an invented element can act like.
     const LIKE_NAMES = MATS.filter((m, i) => isBuiltin(i)).filter((m) => m && likeOk(m.id) && !m.hidden).map((m) => m.name);
-    const BUILD_MATERIALS = ['Sand', 'Water', 'Stone', 'Fire', 'Glass', 'Lava', 'Obsidian', 'Salt', 'Snow', 'Ice', 'Mud', 'Plant', 'Wood', 'Ash', 'Dirt', 'Oil',
-      'Gunpowder', 'Metal', 'Rust', 'Crystal', 'Gold', 'Slime', 'Mirror', 'Flower', 'Clay', 'Brick', 'Coal', 'Diamond', 'Sandstone', 'Moss', 'Vine', 'Cactus',
-      'Honey', 'Sea Water', 'Ember', 'Charcoal', 'Glowstone', 'Copper', 'Magnet', 'Chocolate', 'Coral', 'Eternal Flame', 'Cloud',
-      'Candy', 'Wax', 'Paper', 'Steel', 'Sugar', 'Tar'];
 
     const SCHEMA = {
       type: 'object',
       properties: {
         name: { type: 'string' },
-        type: { type: 'string', enum: ['element', 'creature', 'object'] },
+        type: { type: 'string', enum: ['element', 'creature'] },
         description: { type: 'string' },
         colors: { type: 'array', items: { type: 'string' } },
         behaves_like: { type: 'string', enum: ['none'].concat(LIKE_NAMES) },
@@ -1081,8 +1081,6 @@
         abilities: { type: 'array', items: { type: 'string', enum: ABILITIES } },
         effects: { type: 'array', items: { type: 'string', enum: EFFECTS } },
         sprite: { type: 'array', items: { type: 'string' } },
-        build: { type: 'array', items: { type: 'string' } },
-        parts: { type: 'array', items: { type: 'object', properties: { letter: { type: 'string' }, material: { type: 'string' } }, required: ['letter', 'material'] } },
       },
       required: ['name', 'type', 'description', 'colors'],
     };
@@ -1093,7 +1091,7 @@
 
     Answer with JSON only. Fields:
     - name: 1 to 3 words, Title Case, max 22 characters. No real people, brands or anything scary, violent or rude.
-    - type: "element" (a material: powder, liquid, gas or solid), "creature" (an animal or being that moves) or "object" (a small build made of existing materials).
+    - type: "element" (a material: powder, liquid, gas or solid) or "creature" (an animal or being that moves).
     - description: one short, fun sentence (max 80 characters) saying what it does in the game. Only describe what it really does with the behaves_like, properties, movement, abilities and effects you pick. Never promise something the game can't do.
     - colors: 2 to 4 hex colours like "#ff8800" that suit it.
     - effects: what it does to the world around it, so the description comes true, from: ${EFFECTS.join(', ')}. (wind = stirs up gusts that blow sand about; freeze = freezes water and makes snow; sparks = crackles with little lightning sparks; fog = gives off fog; burn = sets things alight; melt = melts ice and snow; corrode = eats away nearby things; rain = drips water; grow = slowly spreads itself; plants = sprouts plant life from soil; bloom = makes flowers sprout; web = spins sticky webs; paint = colours what it touches; slime = leaves slime; pull = draws loose things and creatures towards it; push = shoves them away; levitate = makes nearby powders float up; shake = shakes the ground so piles slump and crumble; petrify = turns sand, mud and water to stone; crystal = grows crystals; rust = rusts metal; heat = boils water into steam; sponge = soaks up water; purify = turns acid and swamp into clean water; bubbles = gives off bubbles; teleport = blinks to nearby spots; sparkles = twinkles; life = fireflies, bees or butterflies appear near it; rainbow = paints things in rainbow colours; vortex = whirls the air round it; orbit = flings grains round it; bounce = makes nearby powders hop; pulse = sends out puffs of air; splash = flings nearby liquid; erupt = shoots out embers and lava; disintegrate = breaks solids into sand and dust; transmute = changes nearby things into random elements; duplicate = copies nearby things; absorb = eats nearby grains and grows; dissolve = salt and sugar melt away into water; liquefy = turns stone to lava and melts ice, wax and chocolate; contaminate = turns water to swamp and dirt to mud; decay = rots plants and wood into dirt; ferment = turns sugar, honey and plants into bubbly slime; extinguish = puts out fire; condense = turns steam and fog into water; fungus = grows mushrooms; regen = turns ash green again; germinate = makes seeds sprout; darkness = casts a shadow; magnetize = pulls metal; chain = sparks leap along metal). Use [] if none fit.
@@ -1110,16 +1108,11 @@
     - abilities: any that fit, from: ${ABILITIES.join(', ')}.
     - sprite: a tiny side-view pixel picture facing RIGHT, 2 to 5 rows of up to 7 characters. Use letters a, b, c, d for the four colours and "." for empty.
       Draw THIS creature’s own shape (long, round, tall, winged, many-legged...); every creature should look different. Format examples, not to copy: a snail [".bb...", "bbba.d", "aaaaa."], a bat ["a...a", "aabaa", ".a.a."], a robot [".bd.", "caac", ".aa.", ".c.c"]
-    For an object also give:
-    - build: up to 12 rows of up to 17 characters, drawn as seen from the side, bottom row on the ground. Use one letter per material and "." for empty.
-    - parts: which material each letter is, chosen ONLY from: ${BUILD_MATERIALS.join(', ')}.
-      Example (a well): build ["ss...ss", "s.....s", "swwwwws", "sssssss"], parts [{"letter":"s","material":"Stone"},{"letter":"w","material":"Water"}]
 
-    Mostly invent elements and creatures; objects now and then when it makes sense (like Wood + Stone giving a little hut).`;
+    Only ever invent an element or a creature (never a building or object), even when the ingredients are objects or buildings.`;
     // The small on-device models draw builds badly, so they only invent elements and creatures.
     const LOCAL_SCHEMA = JSON.parse(JSON.stringify(SCHEMA));
     LOCAL_SCHEMA.properties.type.enum = ['element', 'creature'];
-    delete LOCAL_SCHEMA.properties.build; delete LOCAL_SCHEMA.properties.parts;
     // A short question for the on-device models: phones' graphics chips can't cope with a long one.
     const LIKE_SHORT = ['Sand', 'Water', 'Fire', 'Lava', 'Lightning', 'Slime', 'Ice', 'Snow', 'Steam', 'Smoke', 'Oil', 'Acid', 'Gunpowder',
       'Cold Fire', 'Plant', 'Mud', 'Honey', 'Stardust', 'Glowstone', 'Bouncy Balls'].filter((n) => LIKE_NAMES.includes(n));
@@ -2178,7 +2171,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 12, update 32';
+  const GAME_VERSION = 'Oct 12, update 35';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave };
 })();
