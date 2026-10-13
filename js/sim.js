@@ -159,6 +159,7 @@
       this.flying = [];         // grains thrown by explosions, flying through the air
       this.airOn = false;       // the air simulation sleeps until something stirs it
       this.blastsNow = 0;       // explosions this frame: a chain reaction throws things harder
+      this.sfx = { boom: 0, boomX: 0.5, booms: 0, bolt: 0, boltX: 0.5, portal: 0, gulp: 0 }; // what happened this frame, for sound effects
       this.creatures = [];
       this.magnets = []; this.hasSticky = false; this.hasBouncy = false;
       for (let i = 0; i < n; i++) this.shade[i] = ri(256);
@@ -268,6 +269,7 @@
 
     blast(cx, cy, power) {
       power = power || 1;
+      { const S = this.sfx; S.booms++; if (power > S.boom) { S.boom = power; S.boomX = cx / this.w; } }
       this.hurtCreatures(cx, cy, Math.round(8 * (0.7 + 0.3 * power)), 'burn');
       const r = Math.round((5 + ri(3)) * (0.75 + 0.25 * power)), w = this.w, h = this.h; // nitro digs a bigger crater
       this.t[cy * w + cx] = 0;
@@ -670,6 +672,7 @@
               if (q >= 0) {
                 const sp = Math.min(9, Math.hypot(p.vx, p.vy) + 0.25), v0 = Math.hypot(p.vx, p.vy) || 1;
                 p.x = q % w; p.y = (q / w) | 0; p.vx = p.vx / v0 * sp; p.vy = p.vy / v0 * sp; p.pz = 1; // same direction, a bit faster
+                this.sfx.portal++;
                 break;
               }
             }
@@ -702,6 +705,7 @@
     swallowed(m, sk) {
       const st = this.bhStore || (this.bhStore = []);
       if (m && st.length < 6000) st.push(m, sk || 0);
+      this.sfx.gulp++;
     }
     swallow(j) { this.swallowed(this.t[j], this.hasSkins ? this.skin[j] : 0); this.t[j] = 0; this.skin[j] = 0; if (this.hasTint) this.tint[j] = 0; }
     // An empty cell right next to a random Portal Out (-1 if there isn't one).
@@ -732,6 +736,7 @@
     // flying that way, so a floor portal under a ceiling portal makes them fall faster and faster.
     teleport(j, dx, dy) {
       const q = this.exitCell(dx, dy); if (q < 0) return false;
+      this.sfx.portal++;
       const t = this.t, k = KIND[t[j]];
       if ((k === K.powder || k === K.liquid) && this.flying.length < 4000 && !BOUNCE[t[j]]) {
         const d = this.exitDir, n = (dx || dy) ? Math.hypot(dx, dy) : Math.hypot(NX[d], NY[d]), sp = 1.4;
@@ -945,6 +950,7 @@
     /* A lightning bolt from (x, y) zig-zags down until it hits something. */
     bolt(x, y) {
       const w = this.w, h = this.h;
+      this.sfx.bolt++; this.sfx.boltX = x / w;
       while (y < h - 1) {
         y++; x = Math.max(0, Math.min(w - 1, x + ri(3) - 1));
         const j = y * w + x, b = this.t[j], kb = KIND[b];
@@ -2442,6 +2448,7 @@
       const q = this.exitCell(dx, dy); if (q < 0) return false;
       const n = Math.hypot(dx, dy) || 1, sp = Math.min(9, speed + 0.25);
       c.x = q % this.w; c.y = (q / this.w) | 0; c.pcd = 4; c.fallFrom = c.y;
+      this.sfx.portal++;
       if (c.k === M.STICKMAN) { c.vx = dx / n * sp; c.vy = dy / n * sp; c.pz = 1; c.air = true; }
       else { c.tv = [dx / n * sp, dy / n * sp]; c.tt = 0; }
       return true;

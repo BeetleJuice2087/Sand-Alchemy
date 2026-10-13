@@ -463,6 +463,7 @@
     txt.querySelector('span').textContent = MATS[m].creature ? 'It\u2019s alive! ' + MATS[m].desc : brewed(m) ? 'Brewed: ' + MATS[m].recipe : MATS[m].recipe || '';
     t.append(sw, txt);
     t.classList.add('on'); $('#current').classList.add('hide');
+    if (MATS[m].invented) SND.sparkle(); else SND.chime();
     setTimeout(() => { t.classList.remove('on'); setTimeout(nextToast, 450); }, 2600);
   }
   function countFound() {
@@ -1685,6 +1686,13 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       }
     }
     const r = $('#brew-result'); r.innerHTML = ''; r.append(res);
+    brewSound(res);
+  }
+  // A little sound for each kind of result (new discoveries get the chime from their pop-up).
+  function brewSound(card) {
+    if (!card || card.classList.contains('win')) return;
+    const what = (card.querySelector('small') || {}).textContent || '';
+    if (/Swallowed/.test(what)) SND.swallowed(); else if (/Nothing happened/.test(what)) SND.fizzle(); else SND.brewed();
   }
   function resultCard(m, small, title, text, extra) {
     const res = document.createElement('div'); res.className = 'res';
@@ -1708,20 +1716,20 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       if (isNew) { world.discovered[known] = 1; discovered(known); }
       const card = resultCard(known, isNew ? '\u2728 New invention!' : 'Already invented', MATS[known].name, isNew ? (MATS[known].desc || 'Added to your toolbar.') : `${listNames(ids)} brew ${MATS[known].name}.`);
       card.classList.add(isNew ? 'win' : 'known'); if (isNew) card.classList.add('invent');
-      r.append(card); renderIngredients(); return;
+      r.append(card); brewSound(card); renderIngredients(); return;
     }
     // Mix them in order and show how it went.
     const c = chainMix(ids);
     const trail = c.steps.map((st, k) => (k ? '+ ' : MATS[ids[0]].name + ' + ') + `${MATS[st.with].name} \u2192 ${MATS[st.out].name}`)
       .concat(c.end === 'ok' || !c.at ? [] : [`+ ${MATS[c.at].name} \u2192 ${c.end === 'void' ? 'swallowed!' : 'fizzle'}`]).join('\n');
-    if (c.end === 'void') { const card = resultCard(M.VOID, 'Swallowed', 'Into the Void', `The Void swallowed the whole brew when ${MATS[c.at].name} went in.`, trail); r.append(card); return; }
-    if (c.end === 'fizzle') { r.append(resultCard(0, 'Nothing happened', 'Just a fizzle\u2026', `It all fizzled out when ${MATS[c.at].name} went in.`, trail)); return; }
+    if (c.end === 'void') { const card = resultCard(M.VOID, 'Swallowed', 'Into the Void', `The Void swallowed the whole brew when ${MATS[c.at].name} went in.`, trail); r.append(card); brewSound(card); return; }
+    if (c.end === 'fizzle') { const card = resultCard(0, 'Nothing happened', 'Just a fizzle\u2026', `It all fizzled out when ${MATS[c.at].name} went in.`, trail); r.append(card); brewSound(card); return; }
     const out = c.out, isNew = !world.discovered[out];
     if (isNew && !c.fromRecipe) { r.append(resultCard(-1, 'Something stirs\u2026', 'Not yet', `This brew is heading towards something you haven't found yet. Keep exploring!`, trail)); return; }
     if (isNew) { world.discovered[out] = 1; discovered(out); }
     const card = resultCard(out, isNew ? 'New discovery!' : 'Brewed into', MATS[out].name, isNew ? (MATS[out].desc || 'Added to your toolbar.') : `${listNames(ids)} brew into ${MATS[out].name}, one step at a time.`, trail);
     card.classList.add(isNew ? 'win' : 'known');
-    r.append(card); if (isNew) renderIngredients();
+    r.append(card); brewSound(card); if (isNew) renderIngredients();
   }
   async function inventFor(ids) {
     const r = $('#brew-result');
@@ -1731,13 +1739,13 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       n.textContent = `Your invention book is full (${invCount()} of ${invMax()}). Delete an invention with its \u00d7 in the book to make room. Here\u2019s a normal mix instead.`;
       r.append(n); return;
     }
-    thinking = true; $('#brew-go').disabled = true;
+    thinking = true; $('#brew-go').disabled = true; SND.bubbling(true);
     r.innerHTML = '<div class="res thinking"><i class="sw brewing"></i><div><small>The Cauldron bubbles\u2026</small><b>Inventing something new</b><span>The Cauldron spirit is dreaming up what ' +
       escapeHtml(listNames(ids)) + ' make together.</span></div></div>';
     const got = await askAI(ids);
     let id = 0;
     if (got.spec) { id = registerInvention({ a: ids[0], b: ids[1], parts: ids.length > 2 ? ids.slice() : undefined, spec: got.spec }); if (id) { saveInventions(); renderPalette(); writeSaveSoon(); } }
-    thinking = false;
+    thinking = false; SND.bubbling(false);
     if (multiKey(used()) !== multiKey(ids) || used().length !== ids.length) { // they picked something else meanwhile
       if (id && !world.discovered[id]) { world.discovered[id] = 1; discovered(id); }
       renderSlots(); return;
@@ -2095,6 +2103,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (PANELS.some((sel) => !$(sel).hidden)) return; // shortcuts only in the world view
     switch (e.key.toLowerCase()) {
       case 'c': toggleTool(ERASE); break;
+      case 'm': SND.set(!SND.on, SND.vol); $('#snd-on').checked = SND.on; if (!SND.on) SND.ambient(null); note(SND.on ? 'Sound on' : 'Sound off'); break;
       case 'e': toggleTool(DROPPER); break;
       case 'b': openBrew(); break;
       case 'r': if (isPortal()) rotatePortal(); else return; break;
@@ -2260,6 +2269,185 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   $('#glow-on').checked = glowOn;
   $('#glow-on').addEventListener('change', (e) => { glowOn = e.target.checked; try { localStorage.setItem(GLOW_KEY, glowOn ? '1' : '0'); } catch (err) { /* ignore */ } });
 
+  /* ---------------- Sound ----------------
+     Every sound is made on the spot with the browser's Web Audio (no sound files).
+     Browsers only allow sound after the first tap or key press, so it wakes up then. */
+  const SND = (() => {
+    const KEY = 'sandalchemy.sound';
+    let on = true, vol = 0.6, amb = true;
+    try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s) { on = s.on !== false; amb = s.amb !== false; vol = Math.max(0, Math.min(1, +s.vol >= 0 ? +s.vol : 0.6)); } } catch (e) { /* defaults */ }
+    let ctx = null, out = null, noise = null, brown = null, grit = null, voices = 0;
+    const last = {};
+    function wake() {
+      if (!ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
+        try { ctx = new AC(); } catch (e) { return null; }
+        const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 6; comp.connect(ctx.destination);
+        out = ctx.createGain(); out.gain.value = on ? vol * vol : 0; out.connect(comp);
+        noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+        const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        // Brown noise (deep, rumbly) for explosions.
+        brown = ctx.createBuffer(1, ctx.sampleRate * 3, ctx.sampleRate);
+        const bd = brown.getChannelData(0); let lastB = 0;
+        for (let i = 0; i < bd.length; i++) { lastB = (lastB + 0.02 * (Math.random() * 2 - 1)) / 1.02; bd[i] = lastB * 3.5; }
+        // A soft clipper gives the rumble some grit.
+        grit = ctx.createWaveShaper(); const curve = new Float32Array(1024);
+        for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; curve[i] = Math.tanh(x * 2.2); } grit.curve = curve; grit.connect(out);
+      }
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      return ctx;
+    }
+    const ready = () => on && vol > 0 && ctx && ctx.state === 'running' && voices < 14;
+    const often = (k, ms) => { const t = performance.now(); if (t - (last[k] || 0) < ms) return false; last[k] = t; return true; };
+    function chain(pan) { // a gain (and a little stereo placement) feeding the master
+      const g = ctx.createGain(); let head = g;
+      if (pan != null && ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, pan)); g.connect(p); p.connect(out); } else g.connect(out);
+      return head;
+    }
+    function env(g, t, peak, a, d) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + d); }
+    function track(node, end) { voices++; node.onended = () => { voices--; }; node.stop(end); }
+    function tone(type, f0, f1, t, len, peak, pan) {
+      const o = ctx.createOscillator(), g = chain(pan); o.type = type;
+      o.frequency.setValueAtTime(f0, t); if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + len);
+      env(g, t, peak, 0.008, len); o.connect(g); o.start(t); track(o, t + len + 0.05);
+    }
+    function hiss(kind, f0, f1, q, t, len, peak, pan) {
+      const s = ctx.createBufferSource(); s.buffer = noise; s.loop = true;
+      const f = ctx.createBiquadFilter(); f.type = kind; f.Q.value = q;
+      f.frequency.setValueAtTime(f0, t); if (f1 !== f0) f.frequency.exponentialRampToValueAtTime(f1, t + len);
+      const g = chain(pan); env(g, t, peak, 0.004, len);
+      s.connect(f); f.connect(g); s.start(t, Math.random() * 1.5); track(s, t + len + 0.05);
+    }
+    const S = {
+      get on() { return on; }, get vol() { return vol; }, get amb() { return amb; },
+      setAmb(a) { amb = a; try { localStorage.setItem(KEY, JSON.stringify({ on, vol, amb })); } catch (e) { /* fine */ } if (!a) S.ambient(null); },
+      set(o, v) { on = o; vol = v; try { localStorage.setItem(KEY, JSON.stringify({ on, vol, amb })); } catch (e) { /* fine */ } if (out) out.gain.setTargetAtTime(on ? vol * vol : 0, ctx.currentTime, 0.05); if (on) wake(); },
+      wake,
+      sleep(s) { if (!ctx) return; if (s) ctx.suspend().catch(() => {}); else ctx.resume().catch(() => {}); },
+      boom(power, x) { // a crack, a long rolling rumble and crackling debris; bigger blasts rumble longer
+        if (!ready() || !often('boom', 90)) return;
+        const t = ctx.currentTime, p = Math.min(4, power), pan = (x - 0.5) * 1.4, len = 0.9 + p * 0.45;
+        hiss('bandpass', 1800, 700, 0.9, t, 0.07, Math.min(0.8, 0.35 + p * 0.12), pan); // the initial crack
+        // The rumble: brown noise through a closing low-pass filter, roughed up a little.
+        const s = ctx.createBufferSource(); s.buffer = brown; s.loop = true;
+        const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 0.5;
+        f.frequency.setValueAtTime(900 + p * 250, t); f.frequency.exponentialRampToValueAtTime(90, t + len);
+        const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.min(1, 0.55 + p * 0.15), t + 0.02);
+        g.gain.setTargetAtTime(0.0001, t + 0.05, len / 3.2);
+        let tail = g; if (ctx.createStereoPanner) { const pn = ctx.createStereoPanner(); pn.pan.value = Math.max(-1, Math.min(1, pan)); g.connect(pn); tail = pn; }
+        s.connect(f); f.connect(g); tail.connect(grit); s.start(t, Math.random() * 2); track(s, t + len + 0.3);
+        // A very low push you feel more than hear (kept quiet so it isn't a drum).
+        tone('sine', 55, 28, t, 0.5, Math.min(0.3, 0.1 + p * 0.05), pan);
+        // Debris crackling for a moment afterwards.
+        const n = 3 + Math.round(p * 2);
+        for (let k = 0; k < n; k++) hiss('highpass', 1500 + Math.random() * 2500, 1200, 0.7, t + 0.08 + Math.random() * (0.25 + p * 0.12), 0.02 + Math.random() * 0.03, 0.06 + Math.random() * 0.08, pan + (Math.random() - 0.5) * 0.6);
+      },
+      bolt(x) { // a sharp crack, then a rumble
+        if (!ready() || !often('bolt', 90)) return;
+        const t = ctx.currentTime, pan = (x - 0.5) * 1.4;
+        hiss('highpass', 2500, 1200, 0.8, t, 0.09, 0.55, pan);
+        hiss('lowpass', 500, 70, 0.8, t + 0.03, 0.9, 0.35, pan);
+      },
+      portal() { if (!ready() || !often('portal', 110)) return; const t = ctx.currentTime; tone('sine', 220, 660, t, 0.16, 0.12); hiss('bandpass', 900, 2400, 3, t, 0.14, 0.05); },
+      gulp() { if (!ready() || !often('gulp', 240)) return; const t = ctx.currentTime; tone('sine', 160, 55, t, 0.22, 0.09); },
+      chime() { if (!ready()) return; const t = ctx.currentTime; [1046.5, 1318.5, 1568, 2093].forEach((f, k) => tone('triangle', f, f, t + k * 0.075, 0.45, 0.24)); },
+      sparkle() { // a new AI invention: a bigger, shimmering run
+        if (!ready()) return; const t = ctx.currentTime;
+        [784, 988, 1175, 1568, 1976, 2349].forEach((f, k) => { tone('triangle', f, f, t + k * 0.06, 0.55, 0.18); tone('sine', f * 2, f * 2, t + k * 0.06 + 0.02, 0.3, 0.04); });
+        hiss('highpass', 6000, 9000, 0.5, t, 0.6, 0.04);
+      },
+      fizzle() { if (!ready()) return; const t = ctx.currentTime; hiss('bandpass', 2200, 300, 2, t, 0.45, 0.35); },
+      swallowed() { if (!ready()) return; const t = ctx.currentTime; tone('sine', 320, 38, t, 0.6, 0.3); hiss('lowpass', 400, 60, 1, t, 0.5, 0.1); },
+      brewed() { if (!ready()) return; const t = ctx.currentTime; tone('triangle', 523, 523, t, 0.18, 0.1); tone('triangle', 784, 784, t + 0.08, 0.25, 0.1); },
+      click() { if (!ready() || !often('click', 40)) return; tone('sine', 1500, 1100, ctx.currentTime, 0.035, 0.035); },
+      /* Ambient world sounds: looping layers whose loudness follows what's on screen.
+         lv = { fire, lava, water, sizzle, storm, bh, wh } (counts), or null to fade everything out. */
+      layers: null,
+      ambient(lv) {
+        if (!ctx || ctx.state !== 'running') return;
+        const now = ctx.currentTime, live = lv && amb && on;
+        if (!S.layers) {
+          if (!live) return;
+          const loop = (buf, type, freq, q) => { const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true; const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q; const g = ctx.createGain(); g.gain.value = 0; src.connect(f); f.connect(g); g.connect(out); src.start(0, Math.random() * 1.5); return { f, g }; };
+          const L = S.layers = {};
+          L.fire = loop(noise, 'bandpass', 2600, 0.6);        // the soft roar of flames
+          L.lava = loop(brown, 'lowpass', 170, 0.7);          // a deep molten rumble
+          L.water = loop(noise, 'bandpass', 1100, 0.9);       // trickling and splashing
+          L.sizzle = loop(noise, 'highpass', 5200, 0.7);      // water hitting something hot
+          L.rain = loop(noise, 'highpass', 3200, 0.5);        // storms
+          // Black holes: a deep, slowly pulsing hum.
+          const bh = ctx.createGain(); bh.gain.value = 0; const bf = ctx.createBiquadFilter(); bf.type = 'lowpass'; bf.frequency.value = 220; bf.connect(bh); bh.connect(out);
+          const o1 = ctx.createOscillator(), o2 = ctx.createOscillator(), o3 = ctx.createOscillator(); o1.type = 'sine'; o2.type = 'sine'; o3.type = 'sawtooth';
+          [o1, o2, o3].forEach((o) => { o.connect(bf); o.start(); });
+          const trem = ctx.createOscillator(), td = ctx.createGain(); trem.frequency.value = 0.35; td.gain.value = 0.35; trem.connect(td); td.connect(bh.gain); trem.start();
+          L.bh = { g: bh, o: [o1, o2, o3], td };
+          // White holes: a bright, shimmering chord.
+          const wh = ctx.createGain(); wh.gain.value = 0; wh.connect(out);
+          const shim = ctx.createOscillator(), sd = ctx.createGain(); shim.frequency.value = 5.5; sd.gain.value = 0; shim.connect(sd); sd.connect(wh.gain); shim.start();
+          [880, 1318.5, 1760, 2217].forEach((f, k) => { const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * (1 + (k - 1.5) * 0.002); const og = ctx.createGain(); og.gain.value = k === 0 ? 1 : 0.5; o.connect(og); og.connect(wh); o.start(); });
+          L.wh = { g: wh, sd };
+        }
+        const L = S.layers, level = (n, full) => Math.min(1, Math.sqrt(Math.max(0, n) / full));
+        const to = (param, v, tc) => param.setTargetAtTime(v, now, tc || 0.25);
+        const z = live ? lv : { fire: 0, lava: 0, water: 0, sizzle: 0, storm: 0, bh: 0, wh: 0 };
+        const fire = level(z.fire, 250), lava = level(z.lava, 900), water = level(z.water, 260), sz = level(z.sizzle, 30), rain = level(z.storm, 250);
+        to(L.fire.g.gain, fire * 0.22); to(L.lava.g.gain, lava * 0.32); to(L.water.g.gain, water * 0.16); to(L.sizzle.g.gain, sz * 0.08, 0.1); to(L.rain.g.gain, rain * 0.06);
+        if (water) to(L.water.f.frequency, 700 + Math.random() * 1100, 0.08); // the babble of moving water
+        // Bigger black holes hum lower and louder.
+        const bl = level(z.bh, 120), bf = 62 - 26 * Math.min(1, Math.sqrt(z.bh) / 25);
+        to(L.bh.g.gain, bl * 0.07, 0.4); to(L.bh.td.gain, bl * 0.025, 0.4);
+        L.bh.o[0].frequency.setTargetAtTime(bf, now, 0.5); L.bh.o[1].frequency.setTargetAtTime(bf * 1.503, now, 0.5); L.bh.o[2].frequency.setTargetAtTime(bf / 2, now, 0.5);
+        const wl = level(z.wh, 120); to(L.wh.g.gain, wl * 0.018, 0.4); to(L.wh.sd.gain, wl * 0.008, 0.4);
+        if (!live || voices > 20) return;
+        // Little one-off pops on top: fire crackles and lava bubbles, more when there's more of it.
+        for (let k = 0, n = Math.round(fire * 7 * Math.random()); k < n; k++) hiss('highpass', 1800 + Math.random() * 3500, 1500, 0.8, now + Math.random() * 0.12, 0.008 + Math.random() * 0.02, 0.08 + Math.random() * 0.2 * fire);
+        for (let k = 0, n = Math.round(lava * 2.2 * Math.random()); k < n; k++) { const f = 70 + Math.random() * 120; tone('sine', f, f * 1.9, now + Math.random() * 0.12, 0.07 + Math.random() * 0.05, 0.08 + 0.12 * lava); }
+      },
+      bubbles: null,
+      bubbling(onOff) { // the Cauldron bubbles while the spirit is thinking
+        clearInterval(S.bubbles); S.bubbles = null;
+        if (!onOff) return;
+        S.bubbles = setInterval(() => { if (!ready()) return; const t = ctx.currentTime, f = 180 + Math.random() * 260; tone('sine', f, f * 2.2, t, 0.09, 0.06); }, 140);
+      },
+    };
+    return S;
+  })();
+  ['pointerdown', 'keydown', 'touchstart'].forEach((ev) => addEventListener(ev, () => { if (SND.on) SND.wake(); }, { capture: true, passive: true }));
+  document.addEventListener('visibilitychange', () => SND.sleep(document.hidden));
+  document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('button') && !e.target.closest('#brew-go')) SND.click(); }, true);
+  // A few times a second, see what's on screen and set the ambient sounds to match.
+  let lastSteam = 0, quietNow = false;
+  function sampleAmbient() {
+    if (!SND.on || !SND.amb) return;
+    const t = world.t, st = world.stamp, ck = world.clock, n = t.length;
+    let fire = 0, lava = 0, water = 0, steam = 0, storm = 0;
+    for (let i = 0; i < n; i++) {
+      const m = t[i]; if (!m) continue;
+      if (m === M.FIRE || m === M.COLDFIRE || m === M.GHOSTFIRE || m === M.ETERNAL) fire++;
+      else if (m === M.LAVA || m === M.MOLTENGOLD) lava++;
+      else if ((m === M.WATER || m === M.SEAWATER || m === M.SWAMP || m === M.ACID) && st[i] === ck) water++; // only water that's moving
+      else if (m === M.STEAM) steam++;
+      else if (m === M.STORM) storm++;
+    }
+    let bh = 0, wh = 0; const H = world.holes;
+    if (H) { (H.bhC || []).forEach((c) => { bh += c.n; }); (H.whC || []).forEach((c) => { wh += c.n; }); }
+    const sizzle = Math.max(0, steam - lastSteam); lastSteam = steam;
+    SND.ambient({ fire, lava, water, sizzle, storm, bh, wh });
+  }
+  function playWorldSounds() {
+    const s = world.sfx; if (!s) return;
+    if (s.booms) SND.boom(s.boom + Math.min(1.5, (s.booms - 1) * 0.15), s.boomX);
+    if (s.bolt) SND.bolt(s.boltX);
+    if (s.portal) SND.portal();
+    if (s.gulp) SND.gulp();
+    s.boom = 0; s.booms = 0; s.bolt = 0; s.portal = 0; s.gulp = 0;
+  }
+  $('#snd-on').checked = SND.on; $('#snd-vol').value = Math.round(SND.vol * 100);
+  $('#snd-on').addEventListener('change', (e) => { SND.set(e.target.checked, SND.vol); if (!e.target.checked) SND.ambient(null); });
+  $('#amb-on').checked = SND.amb;
+  $('#amb-on').addEventListener('change', (e) => SND.setAmb(e.target.checked));
+  $('#snd-vol').addEventListener('input', (e) => SND.set(SND.on, e.target.value / 100));
+
   /* ---------------- Main loop ---------------- */
   let saveTimer = 0;
   function writeSaveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(writeSave, 800); }
@@ -2274,7 +2462,8 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       if (k === K.powder || k === K.liquid || k === K.gas || k === K.fire || k === K.cloud || k === K.float || k === K.skypowder || baseOf(tool) === M.LIGHTNING) dab(curX, curY);
     }
     if ((world.frame & 7) === 0 || padShown) updateStickPad();
-    if (!paused) world.step();
+    if (!paused) { world.step(); playWorldSounds(); if ((world.frame & 7) === 0) sampleAmbient(); quietNow = false; }
+    else if (!quietNow) { quietNow = true; SND.ambient(null); } // paused: the world goes quiet
     world.render(px);
     ctx.putImageData(image, 0, 0);
     drawGlow();
@@ -2349,7 +2538,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 13, update 42';
+  const GAME_VERSION = 'Oct 13, update 46';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
-  window.SandGame = { get world() { return world; }, pick, M, writeSave };
+  window.SandGame = { get world() { return world; }, pick, M, writeSave, sound: SND };
 })();
