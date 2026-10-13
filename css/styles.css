@@ -384,3 +384,13 @@ html, body { overflow-x: hidden; }
 .danger-ghost:hover, .danger-ghost:focus-visible { background: color-mix(in srgb, #e5484d 14%, var(--surface)); }
 .primary-btn.danger.sure { animation: badge-shake 0.35s; }
 #erase-confirm .row + .row { margin-top: 10px; }
+
+/* Portals: a ghost outline shows where it goes, and a rotate button turns it sideways */
+.portal-ghost { position: absolute; z-index: 2; pointer-events: none; border: 2px solid #ffb04a; border-radius: 3px; background: rgba(255, 150, 50, 0.18);
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55), 0 0 12px rgba(255, 150, 50, 0.5); }
+.portal-ghost.out { border-color: #5ab8ff; background: rgba(60, 150, 255, 0.18); box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55), 0 0 12px rgba(60, 150, 255, 0.5); }
+.portal-ghost[hidden] { display: none; }
+.portal-rot { position: absolute; z-index: 3; right: 10px; top: 10px; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px 0 9px; border-radius: 999px;
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 88%, transparent); color: var(--text); font: inherit; font-size: 0.8rem; font-weight: 800; cursor: pointer; backdrop-filter: blur(4px); }
+.portal-rot svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.portal-rot[hidden] { display: none; }
