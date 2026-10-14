@@ -7,6 +7,16 @@
   'use strict';
   const { M, MATS, COUNT } = window.SandMats;
   const { World, rnd, ri, KIND, K } = window.SandSim;
+  /* The game is three script files that must come from the same update. If one is left over from an older
+     update (easy to miss when uploading), say which one instead of quietly breaking. */
+  const FILES = 63;
+  const oldFiles = [window.SandMats.FILES !== FILES && 'js/materials.js', window.SandSim.FILES !== FILES && 'js/sim.js'].filter(Boolean);
+  if (oldFiles.length) addEventListener('load', () => {
+    const d = document.createElement('div');
+    d.setAttribute('style', 'position:fixed;left:12px;right:12px;top:12px;z-index:99;padding:14px 16px;border-radius:14px;background:#5a1d2a;color:#fff;font:600 15px/1.4 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)');
+    d.textContent = 'Some game files are from an older update: ' + oldFiles.join(' and ') + '. Upload the new ' + (oldFiles.length > 1 ? 'ones' : 'one') + ' too, or some things (like brewing) won\u2019t work.';
+    d.addEventListener('click', () => d.remove()); document.body.append(d);
+  });
   const $ = (s) => document.querySelector(s);
 
   const SAVE_KEY = 'sandalchemy.save.v1';
@@ -47,6 +57,19 @@
     { label: 'Space', items: ORDER.filter((m) => MATS[m].space).sort(byName) },
     { label: 'Creatures', items: ORDER.filter((m) => MATS[m].creature).sort(byName) },
   ];
+  /* Big numbers in short form: 1.23K, 45.6M, 7B ... up to Uvg (10^66). */
+  const NUM_UNITS = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc', 'Ud', 'Dd', 'Td', 'Qad', 'Qid', 'Sxd', 'Spd', 'Ocd', 'Nod', 'Vg', 'Uvg'];
+  function shortNum(n) {
+    n = Number(n) || 0;
+    const neg = n < 0; n = Math.abs(n);
+    if (Math.round(n) < 1000) return (neg ? '-' : '') + Math.round(n);
+    let u = Math.floor(Math.log10(n) / 3);
+    let v = n / 10 ** (u * 3);
+    let txt = v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0);
+    if (Number(txt) >= 1000) { u++; v = n / 10 ** (u * 3); txt = v.toFixed(2); } // 999.96K shows as 1.00M
+    if (u >= NUM_UNITS.length) return (neg ? '-' : '') + n.toExponential(2);
+    return (neg ? '-' : '') + txt.replace(/\.0+$|(\.\d*?)0+$/, '$1') + NUM_UNITS[u];
+  }
   function groupLabel(text, cls) { const el = document.createElement(cls === 'grp' ? 'span' : 'h3'); el.className = cls; el.textContent = text; return el; }
 
   const canvas = $('#world'), ctx = canvas.getContext('2d');
@@ -74,6 +97,27 @@
     renderPalette(); writeSaveSoon();
   }
 
+  /* Recently used: the last few things you painted with, newest first, at the front of the toolbar. */
+  const RECENT_KEY = 'sandalchemy.recent.v1', RECENT_MAX = 10;
+  let recent = [];
+  try { const r = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); if (Array.isArray(r)) recent = r.filter((m) => m > 0 && m < COUNT).slice(0, RECENT_MAX); } catch (e) { /* ignore */ }
+  const recentItems = () => recent.filter((m) => MATS[m] && !MATS[m].reserved && !MATS[m].hidden && world && world.discovered[m]);
+  function useRecent(m) {
+    if (!(m > 0 && m < COUNT) || !MATS[m] || m === M.CAULDRON) return;
+    if (recent[0] === m) return;
+    recent = [m].concat(recent.filter((x) => x !== m)).slice(0, RECENT_MAX);
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch (e) { /* ignore */ }
+    drawRecent(); writeSaveSoon();
+  }
+  // Only the Recent part of the toolbar is redrawn (the whole toolbar can hold thousands of buttons).
+  function drawRecent() {
+    const box = document.querySelector('#palette .recent-box'); if (!box) return;
+    box.innerHTML = '';
+    const items = recentItems(); if (!items.length) return;
+    box.append(groupLabel('\u{1F552} Recent', 'grp recent'));
+    items.forEach((m) => box.append(matButton(m, MATS[m].name)));
+  }
+
   /* ---------------- Saving ---------------- */
   function loadSave() {
     try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (e) { return null; }
@@ -84,7 +128,7 @@
     // The world is stored as compact strings: material, age and memory
     // (age keeps fires and growing trees going; memory is what a mirror copies).
     // Version 2 stores material, memory and paint as two bytes per cell (ids go past 255).
-    return { v: 2, disc, unseen: [...unseen], hinted: [...hinted], revealed: [...revealed], favs, tool, brush, inv: inventions, stats: ST,
+    return { v: 2, disc, unseen: [...unseen], hinted: [...hinted], revealed: [...revealed], favs, recent, tool, brush, inv: inventions, stats: ST,
       world: { w: world.w, h: world.h, zg: world.zeroG ? 1 : undefined, dt: world.dayT ? +world.dayT.toFixed(4) : undefined, t: pack16(world.exportT()), l: pack(world.life), f: pack16(world.fuel), p: world.hasTint ? pack16(world.tint) : undefined,
         c: world.creatures.map((c) => [c.k, Math.round(c.x), Math.round(c.y), c.dir, c.into || 0, c.s === 5 ? 5 : 0, Math.min(c.age || 0, 99999)]) } };
   }
@@ -150,6 +194,7 @@
       if (saved) {
         unseen = new Set(saved.unseen || []); hinted = new Set(saved.hinted || []); revealed = new Set(saved.revealed || []);
         if (saved.stats && typeof saved.stats === 'object') { let had = null; try { had = localStorage.getItem(STATS_KEY); } catch (e) { /* fine */ } if (!had) { Object.assign(ST, saved.stats); saveStats(); } } // stats from a restored backup
+        if (Array.isArray(saved.recent) && !recent.length) recent = saved.recent.filter((m) => m > 0 && m < COUNT).slice(0, RECENT_MAX);
         if (Array.isArray(saved.favs) && !favs.length) { favs = saved.favs.filter((m) => m > 0 && m < COUNT); try { localStorage.setItem(FAV_KEY, JSON.stringify(favs)); } catch (e) { /* ignore */ } }
         if (!(saved.v >= 2)) { if (saved.tool === 255) saved.tool = ERASE; else if (saved.tool === 254) saved.tool = DROPPER; } // older saves
         if (saved.tool === ERASE || saved.tool === DROPPER || saved.tool === BLENDER || (saved.tool && saved.tool !== M.CAULDRON && next.discovered[saved.tool])) tool = saved.tool;
@@ -211,6 +256,7 @@
     pal.append(matButton(ERASE, 'Eraser'));
     pal.append(matButton(DROPPER, 'Dropper'));
     pal.append(matButton(BLENDER, 'Blender'));
+    const rb = document.createElement('div'); rb.className = 'recent-box'; pal.append(rb); drawRecent();
     const fv = favItems();
     if (fv.length) { pal.append(groupLabel('\u2605 Favorites', 'grp fav')); fv.forEach((m) => pal.append(matButton(m, MATS[m].name))); }
     GROUPS.forEach((grp) => {
@@ -412,7 +458,7 @@
       const row = document.createElement('div'); row.className = 'iw-row';
       const sw = document.createElement('i'); sw.className = 'sw'; sw.setAttribute('style', swatchStyle(m));
       const nm = document.createElement('b'); nm.textContent = MATS[m].name;
-      const ct = document.createElement('small'); ct.textContent = counts[m].toLocaleString() + (isCreature(m) ? '' : counts[m] === 1 ? ' bit' : ' bits');
+      const ct = document.createElement('small'); ct.textContent = shortNum(counts[m]) + (isCreature(m) ? '' : counts[m] === 1 ? ' bit' : ' bits');
       const x = document.createElement('button'); x.type = 'button'; x.className = 'iw-x'; x.setAttribute('aria-label', 'Remove all ' + MATS[m].name); x.innerHTML = '&times;';
       x.addEventListener('click', () => { removeAll(m); row.classList.add('gone'); setTimeout(renderInWorld, 180); });
       row.append(sw, nm, ct, x); list.append(row);
@@ -624,7 +670,7 @@
   // The toolbar's Search button: type a name, tap the result to start painting with it.
   function openFind() {
     const g = $('#find-grid'); g.innerHTML = '';
-    [{ label: '\u2605 Favorites', items: favItems() }].concat(shelfGroups()).forEach((grp) => {
+    [{ label: '\u{1F552} Recent', items: recentItems() }, { label: '\u2605 Favorites', items: favItems() }].concat(shelfGroups()).forEach((grp) => {
       const items = grp.items.filter((m) => world.discovered[m]);
       if (!items.length) return;
       g.append(groupLabel(grp.label, 'ing-section'));
@@ -2144,6 +2190,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       localStorage.setItem(SAVE_KEY, JSON.stringify(pendingRestore));
       localStorage.setItem(INV_KEY, JSON.stringify(Array.isArray(pendingRestore.inv) ? pendingRestore.inv : []));
       localStorage.setItem(FAV_KEY, JSON.stringify(Array.isArray(pendingRestore.favs) ? pendingRestore.favs : favs)); // a backup brings its favorites
+      localStorage.setItem(RECENT_KEY, JSON.stringify(Array.isArray(pendingRestore.recent) ? pendingRestore.recent : recent));
     }
     catch (e) { note('This browser won\u2019t let the game save, so it can\u2019t restore here.'); $('#restore-confirm').hidden = true; return; }
     restoring = true; // don't let the current world overwrite it on the way out
@@ -2304,6 +2351,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     lineSvg.removeAttribute('hidden');
   }
   function startLine(e) {
+    if (tool < COUNT) useRecent(tool);
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
     const [x, y] = toCell(e);
     line = { x0: x, y0: y, x1: x, y1: y };
@@ -2408,6 +2456,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     e.preventDefault();
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
     drawing = true; [curX, curY] = toCell(e); lastX = curX; lastY = curY; boltWait = 0; petX = petY = -99;
+    if (tool < COUNT) useRecent(tool);
     add(ST.brushUse, brush); strokeWalls = 0;
     $('#tip').classList.add('gone');
     paintLine(lastX, lastY, curX, curY);
@@ -2428,7 +2477,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (line) { endLine(e.type === 'pointerup'); return; }
     if (portalDrag) {
       portalDrag = false;
-      if (e.type === 'pointerup') { const [cx, cy] = toCell(e); placePortal(cx, cy); writeSaveSoon(); }
+      if (e.type === 'pointerup') { const [cx, cy] = toCell(e); placePortal(cx, cy); useRecent(tool); writeSaveSoon(); }
       if (e.pointerType !== 'mouse') ghost.hidden = true;
       return;
     }
@@ -2661,7 +2710,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     const in5 = ST.discTimes.filter((t) => now - t <= 300000).length; if (in5 > ST.best5min) ST.best5min = in5;
     sesBump('newFinds', 1);
   }
-  const fmt = (n) => Math.round(n || 0).toLocaleString();
+  const fmt = (n) => shortNum(n);
   const fmtTime = (ms) => { const s = Math.floor((ms || 0) / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : m ? `${m}m` : `${s}s`; };
   const fmtDate = (d) => { if (!d) return '—'; const x = typeof d === 'string' ? new Date(d + 'T12:00') : new Date(d); return x.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); };
   const boomName = (p) => !p ? '—' : p < 1.5 ? 'Gunpowder-sized' : p < 3 ? 'TNT-sized' : p < 4.5 ? 'C4-sized' : 'Huge chain reaction';
@@ -2703,7 +2752,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     tile(hi, `${found + live.length}`, `total discoveries (${found} built-in + ${live.length} inventions)`);
     tile(hi, fmt(ST.painted), 'cells painted');
     tile(hi, topPaint.length ? nm(+topPaint[0][0]) : '—', 'most-used material');
-    tile(hi, `${fmt(ST.tempHi)}°`, 'hottest temperature');
+    tile(hi, `${Math.round(ST.tempHi || 0).toLocaleString()}°`, 'hottest temperature');
     tile(hi, ST.portalMax ? ST.portalMax.toFixed(1) + ' cells/frame' : '—', 'fastest portal speed');
     tile(hi, fmt(ST.chainMax), 'biggest chain reaction (explosions in one second)');
     tile(hi, fmt(ST.sunrises), 'sunrises watched');
@@ -2745,7 +2794,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     tile(g3, fmt(ST.mostDiverse), 'most different materials in one world');
     // 4. Fire & heat
     const g4 = section('Fire, heat & temperature');
-    tile(g4, `${fmt(ST.tempHi)}°`, 'hottest temperature'); tile(g4, `${fmt(ST.tempLo)}°`, 'coldest temperature');
+    tile(g4, `${Math.round(ST.tempHi || 0).toLocaleString()}°`, 'hottest temperature'); tile(g4, `${Math.round(ST.tempLo || 0).toLocaleString()}°`, 'coldest temperature');
     tile(g4, fmt(ST.fires), 'fires started'); tile(g4, fmtTime(ST.longestFire * 1000), 'longest-burning fire');
     tile(g4, fmt(ST.ash), 'cells burned to ash'); tile(g4, fmt(ST.melt), 'ice melted'); tile(g4, fmt(ST.boil), 'water boiled to steam');
     tile(g4, fmt(ST.cooled), 'lava cooled into rock'); tile(g4, fmt(ST.obs), 'obsidian created');
@@ -3298,7 +3347,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 13, update 61';
+  const GAME_VERSION = 'Oct 14, update 64';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave, sound: SND };
 })();
