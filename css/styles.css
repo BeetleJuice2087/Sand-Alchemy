@@ -46,7 +46,7 @@ svg .fill { fill: currentColor; stroke: none; }
   background: radial-gradient(120% 80% at 50% 0%, #22265a 0%, #15173a 55%, #0e0f26 100%); }
 #heat { position: absolute; left: 0; top: 0; pointer-events: none; image-rendering: auto; opacity: 0.85; }
 #heat[hidden] { display: none; }
-#glow { position: absolute; left: 0; top: 0; pointer-events: none; mix-blend-mode: screen; image-rendering: auto; }
+#glow { display: none; } /* drawn into the world canvas each frame */
 #world { position: absolute; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; touch-action: none; cursor: crosshair; }
 .tip { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(80%, 320px); text-align: center; color: var(--muted); font-weight: 600; line-height: 1.4; pointer-events: none; transition: opacity 0.6s; }
 .tip.gone { opacity: 0; }
@@ -206,6 +206,11 @@ html, body { overflow-x: hidden; }
 .erase-ring { position: absolute; z-index: 2; pointer-events: none; transform: translate(-50%, -50%); border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.9); box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55), inset 0 0 0 1.5px rgba(0, 0, 0, 0.35); background: rgba(255, 255, 255, 0.08); }
 .erase-ring[hidden] { display: none; }
+/* Blender: the ring stays still and a dashed circle inside it turns (turning the ring itself made Safari flash a dark square) */
+.erase-ring.spin { border-color: transparent; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.45), inset 0 0 0 1.5px rgba(0, 0, 0, 0.3); background: rgba(255, 255, 255, 0.06); }
+.erase-ring.spin::before { content: ''; position: absolute; inset: -2px; border-radius: 50%; border: 2px dashed rgba(255, 255, 255, 0.9);
+  animation: blendspin 0.6s linear infinite; will-change: transform; }
+@keyframes blendspin { to { transform: rotate(360deg); } }
 
 /* Eye dropper */
 .sw.dropper { display: grid; place-items: center; background: #23264f; border: 2px solid var(--muted); box-shadow: none; color: var(--text); }

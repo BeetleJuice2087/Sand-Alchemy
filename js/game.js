@@ -10,7 +10,9 @@
   const $ = (s) => document.querySelector(s);
 
   const SAVE_KEY = 'sandalchemy.save.v1';
-  const ERASE = 65535, DROPPER = 65534; // tools (older saves used 255 and 254, before ids went past 255)
+  const ERASE = 65535, DROPPER = 65534, BLENDER = 65533; // tools (older saves used 255 and 254, before ids went past 255)
+  const BLENDER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12c0-3 2-5 5-5M12 12c3 0 5 2 5 5M12 12c0 3-2 5-5 5M12 12c-3 0-5-2-5-5" /><circle cx="12" cy="12" r="9.5" /></svg>';
+  const blendR = () => Math.round(BRUSHES[brush].r * 1.25) + 3; // the blender reaches a bit further than the brush
   const DROPPER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4.5l5 5M17 7l2.2-2.2a1.8 1.8 0 0 0-2.5-2.5L14.5 4.5M16 8.5l-8.6 8.6L4 20l2.9-3.4L15.5 8" /></svg>';
   const BRUSHES = [{ r: 1, label: 'S', dot: 6 }, { r: 3, label: 'M', dot: 11 }, { r: 6, label: 'L', dot: 17 }, { r: 10, label: 'XL', dot: 24 }];
   const ORDER = [M.SAND, M.WATER, M.FIRE, M.STONE, M.STEAM, M.SMOKE, M.GLASS, M.LAVA, M.OBSIDIAN, M.SALT, M.CLOUD,
@@ -150,7 +152,7 @@
         if (saved.stats && typeof saved.stats === 'object') { let had = null; try { had = localStorage.getItem(STATS_KEY); } catch (e) { /* fine */ } if (!had) { Object.assign(ST, saved.stats); saveStats(); } } // stats from a restored backup
         if (Array.isArray(saved.favs) && !favs.length) { favs = saved.favs.filter((m) => m > 0 && m < COUNT); try { localStorage.setItem(FAV_KEY, JSON.stringify(favs)); } catch (e) { /* ignore */ } }
         if (!(saved.v >= 2)) { if (saved.tool === 255) saved.tool = ERASE; else if (saved.tool === 254) saved.tool = DROPPER; } // older saves
-        if (saved.tool === ERASE || saved.tool === DROPPER || (saved.tool && saved.tool !== M.CAULDRON && next.discovered[saved.tool])) tool = saved.tool;
+        if (saved.tool === ERASE || saved.tool === DROPPER || saved.tool === BLENDER || (saved.tool && saved.tool !== M.CAULDRON && next.discovered[saved.tool])) tool = saved.tool;
         if (saved.brush != null && BRUSHES[saved.brush]) brush = saved.brush;
         if (old) $('#tip').classList.add('gone');
       }
@@ -208,6 +210,7 @@
     $('#btn-pot').hidden = false; // the Cauldron is always there
     pal.append(matButton(ERASE, 'Eraser'));
     pal.append(matButton(DROPPER, 'Dropper'));
+    pal.append(matButton(BLENDER, 'Blender'));
     const fv = favItems();
     if (fv.length) { pal.append(groupLabel('\u2605 Favorites', 'grp fav')); fv.forEach((m) => pal.append(matButton(m, MATS[m].name))); }
     GROUPS.forEach((grp) => {
@@ -222,13 +225,13 @@
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'mat' + (m === tool ? ' on' : '') + (unseen.has(m) ? ' new' : '');
     b.dataset.m = m; b.setAttribute('aria-label', name); b.setAttribute('aria-pressed', m === tool);
-    if (m === ERASE) b.title = 'Eraser (C)'; else if (m === DROPPER) b.title = 'Dropper (E)';
-    const sw = document.createElement('i'); sw.className = 'sw' + (m === ERASE ? ' erase' : m === DROPPER ? ' dropper' : '');
-    if (m === DROPPER) sw.innerHTML = DROPPER_ICON;
+    if (m === ERASE) b.title = 'Eraser (C)'; else if (m === DROPPER) b.title = 'Dropper (E)'; else if (m === BLENDER) b.title = 'Blender (X)';
+    const sw = document.createElement('i'); sw.className = 'sw' + (m === ERASE ? ' erase' : m === DROPPER ? ' dropper' : m === BLENDER ? ' dropper blender' : '');
+    if (m === DROPPER) sw.innerHTML = DROPPER_ICON; else if (m === BLENDER) sw.innerHTML = BLENDER_ICON;
     else if (m !== ERASE) sw.setAttribute('style', swatchStyle(m));
     const label = document.createElement('span'); label.textContent = name;
     b.append(sw, label);
-    if (m !== ERASE && m !== DROPPER) {
+    if (m !== ERASE && m !== DROPPER && m !== BLENDER) {
       if (isFav(m)) b.classList.add('is-fav');
       // Long-press (phone) or right-click (computer) to add it to, or take it out of, Favorites.
       let timer = 0, sx = 0, sy = 0, held = false, touch = false;
@@ -255,6 +258,7 @@
     const sw = $('#current-sw');
     sw.innerHTML = '';
     if (tool === ERASE) { sw.className = 'sw erase'; sw.removeAttribute('style'); $('#current-name').textContent = 'Eraser'; }
+    else if (tool === BLENDER) { sw.className = 'sw dropper blender'; sw.removeAttribute('style'); sw.innerHTML = BLENDER_ICON; $('#current-name').textContent = 'Blender: hold to mix'; }
     else if (tool === DROPPER) { sw.className = 'sw dropper'; sw.removeAttribute('style'); sw.innerHTML = DROPPER_ICON; $('#current-name').textContent = 'Hold, aim, let go to copy'; }
     else { sw.className = 'sw'; sw.setAttribute('style', swatchStyle(tool)); $('#current-name').textContent = MATS[tool].name; }
     $('#current-size').textContent = BRUSHES[brush].label;
@@ -2163,9 +2167,10 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   // A ring shows exactly where the eraser will clear.
   const ring = $('#erase-ring');
   function moveRing(e, show) {
-    if (tool !== ERASE || !show) { ring.hidden = true; return; }
+    if ((tool !== ERASE && tool !== BLENDER) || !show) { ring.hidden = true; return; }
     const r = canvas.getBoundingClientRect(), s = stage.getBoundingClientRect();
-    const [cx, cy] = toCell(e), d = (BRUSHES[brush].r * 2 + 1) * dc();
+    const [cx, cy] = toCell(e), d = ((tool === BLENDER ? blendR() : BRUSHES[brush].r) * 2 + 1) * dc();
+    ring.classList.toggle('spin', tool === BLENDER);
     ring.style.width = ring.style.height = d + 'px';
     ring.style.left = (r.left - s.left + (cx + 0.5) * dc()) + 'px';
     ring.style.top = (r.top - s.top + (cy + 0.5) * dc()) + 'px';
@@ -2352,6 +2357,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (PANELS.some((sel) => !$(sel).hidden)) return; // shortcuts only in the world view
     switch (e.key.toLowerCase()) {
       case 'c': toggleTool(ERASE); break;
+      case 'x': toggleTool(BLENDER); break;
       case '[': setSpeed(SPEEDS[Math.max(0, SPEEDS.indexOf(speed) - 1)]); note('Speed ' + $('#world-btn-label').textContent); break;
       case ']': setSpeed(SPEEDS[Math.min(SPEEDS.length - 1, SPEEDS.indexOf(speed) + 1)]); note('Speed ' + $('#world-btn-label').textContent); break;
       case '.': stepOnce(); break;
@@ -2375,7 +2381,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   canvas.addEventListener('pointerdown', (e) => {
     downAt = { t: performance.now(), x: e.clientX, y: e.clientY };
     const twoTaps = e.pointerType !== 'mouse' && lastTap && performance.now() - lastTap.t < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
-    if ((e.shiftKey || twoTaps) && tool !== DROPPER && baseOf(tool) !== M.LIGHTNING) { e.preventDefault(); lastTap = null; startLine(e); return; }
+    if ((e.shiftKey || twoTaps) && tool !== DROPPER && tool !== BLENDER && baseOf(tool) !== M.LIGHTNING) { e.preventDefault(); lastTap = null; startLine(e); return; }
     if (tool !== DROPPER) snapshot();
     if (isPortal()) { // show where it'll go; it's placed when you let go
       e.preventDefault(); try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* fine */ } $('#tip').classList.add('gone');
@@ -2423,9 +2429,47 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     const steps = Math.max(1, Math.ceil(d / Math.max(1, r * 0.6)));
     for (let s = 0; s <= steps; s++) dab(Math.round(x0 + (x1 - x0) * s / steps), Math.round(y0 + (y1 - y0) * s / steps));
   }
+  /* The blender: everything inside the ring gets whirled round and jumbled together, creatures too.
+     Walls and portals stay put. Mixed-up neighbours then react with each other as usual. */
+  const NO_BLEND = new Set([M.WALL, M.PORTALIN, M.PORTALOUT]);
+  let blendSpin = 0;
+  function blend(cx, cy) {
+    const w = world.w, h = world.h, t = world.t, R = blendR(), R2 = R * R;
+    const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? -1 : y * w + x);
+    const ok = (i) => i >= 0 && !NO_BLEND.has(t[i]);
+    blendSpin += 0.35;
+    const n = Math.round(R2 * 3);
+    let moved = 0;
+    for (let k = 0; k < n; k++) {
+      const dx = ri(R * 2 + 1) - R, dy = ri(R * 2 + 1) - R, d2 = dx * dx + dy * dy;
+      if (d2 > R2) continue;
+      const i = at(cx + dx, cy + dy); if (!ok(i)) continue;
+      let j;
+      if (rnd() < 0.6) { // swirl: trade places with the spot a little way round the circle
+        const a = 0.35 + rnd() * 0.5, c = Math.cos(a), s = Math.sin(a);
+        j = at(cx + Math.round(dx * c - dy * s), cy + Math.round(dx * s + dy * c));
+      } else { // jumble: trade with any spot inside the ring
+        const ex = ri(R * 2 + 1) - R, ey = ri(R * 2 + 1) - R;
+        if (ex * ex + ey * ey > R2) continue;
+        j = at(cx + ex, cy + ey);
+      }
+      if (j === i || !ok(j) || (t[i] === 0 && t[j] === 0)) continue;
+      world.swap(i, j); moved++;
+    }
+    // Creatures get flung round the ring too.
+    for (const c of world.creatures) {
+      const dx = c.x - cx, dy = c.y - cy, d2 = dx * dx + dy * dy;
+      if (d2 > R2 || rnd() > 0.25) continue;
+      const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * R;
+      const nx = Math.round(cx + Math.cos(a) * rr), ny = Math.round(cy + Math.sin(a) * rr), j = at(nx, ny);
+      if (j >= 0 && t[j] === 0) { c.x = nx; c.y = ny; }
+    }
+    if (moved) { ST.blended = (ST.blended || 0) + moved; world.userPaint = false; }
+  }
   let petX = -99, petY = -99, straight = false, strokeWalls = 0;
   function dab(cx, cy) {
     const w = world.w, h = world.h, r = BRUSHES[brush].r, t = world.t;
+    if (tool === BLENDER) { blend(cx, cy); return; }
     if (tool === ERASE) world.removeCreatures(cx, cy, r);
     if (isObject(tool)) {
       // Objects are placed whole, spaced out so they don't overlap along a stroke.
@@ -2667,7 +2711,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     tile(g1, fmt(ST.mutes), 'times sound was muted');
     // 2. Drawing
     const g2 = section('Drawing & building');
-    tile(g2, fmt(ST.painted), 'cells painted'); tile(g2, fmt(ST.erased), 'cells erased'); tile(g2, fmt(ST.lines), 'straight lines drawn');
+    tile(g2, fmt(ST.painted), 'cells painted'); tile(g2, fmt(ST.erased), 'cells erased'); tile(g2, fmt(ST.blended || 0), 'cells blended'); tile(g2, fmt(ST.lines), 'straight lines drawn');
     const bu = topOf(ST.brushUse)[0]; tile(g2, bu ? BRUSHES[+bu[0]].label : '—', 'favorite brush size');
     tile(g2, BRUSHES.map((b, k) => b.label + ' ' + fmt(ST.brushUse[k])).join(' · '), 'strokes per brush size');
     tile(g2, fmt(ST.undos), 'undos'); tile(g2, fmt(ST.clears), 'worlds cleared'); tile(g2, fmt(ST.walls), 'wall cells placed');
@@ -2826,10 +2870,11 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       g.fillStyle = `rgba(255,255,255,${a})`; g.fillRect(x, y, sz, sz);
     }
   }
+  let nightDim = 0;
   function updateSky() {
     const st = stage.style, wc = canvas.style;
     if (skyMode === 'classic') {
-      if (skyShown !== 'classic') { st.background = ''; wc.filter = ''; $('#sky').hidden = true; glowMul = 1; $('#world-btn-sky').hidden = true; skyShown = 'classic'; }
+      if (skyShown !== 'classic') { st.background = ''; wc.filter = ''; nightDim = 0; $('#sky').hidden = true; glowMul = 1; $('#world-btn-sky').hidden = true; skyShown = 'classic'; }
       return;
     }
     skyShown = skyMode; $('#sky').hidden = false;
@@ -2844,7 +2889,9 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     arc($('#sun'), t < 0.6 ? t / 0.5 : (t - 1) / 0.5);
     arc($('#moon'), ((t + 0.5) % 1) / 0.5);
     $('#stars').style.opacity = (1 - light) * 0.95;
-    wc.filter = light > 0.98 ? '' : `brightness(${(0.45 + 0.55 * light).toFixed(2)}) saturate(${(0.7 + 0.3 * light).toFixed(2)})`;
+    // Night darkens the world. Done on the canvas itself: a CSS filter on it made Safari flash dark squares
+    // around anything animating on top (like the blender ring).
+    wc.filter = ''; nightDim = light > 0.98 ? 0 : 0.55 * (1 - light);
     glowMul = 1.7 - 0.95 * light; // lights look brighter in the dark
     const badge = $('#world-btn-sky'); badge.hidden = false; badge.textContent = dusk > 0.45 ? '\u{1F305}' : light > 0.5 ? '\u2600' : '\u263E';
   }
@@ -2889,7 +2936,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   /* ---------------- Glow (bloom) ----------------
      Everything that gives off light (lava, fire, lightning, glowing inventions,
      red-hot rock) is gathered at half size, blurred, and laid over the world
-     with a "screen" blend, so it reads as soft light spilling around it. */
+     as see-through light, so it reads as soft light spilling around it. */
   const glowCv = $('#glow'), gctx = glowCv.getContext('2d'), GLOW_KEY = 'sandalchemy.glow';
   let glowOn = true; try { glowOn = localStorage.getItem(GLOW_KEY) !== '0'; } catch (e) { /* ignore */ }
   const BD = 2; // one glow pixel covers 2x2 cells
@@ -2931,9 +2978,13 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     const gain = 3.2 * glowMul / 255;
     for (let j = 0; j < bw * bh; j++) {
       const r = R[j], g = G[j], b = B[j];
-      if (r + g + b < 1) { gPx[j] = 0xff000000; continue; }
+      if (r + g + b < 1) { gPx[j] = 0; continue; } // see-through where nothing glows
       // Soft roll-off so big lava lakes glow without turning into a white blob.
-      gPx[j] = ((255 << 24) | (((255 * (1 - Math.exp(-b * gain))) & 255) << 16) | (((255 * (1 - Math.exp(-g * gain))) & 255) << 8) | ((255 * (1 - Math.exp(-r * gain))) & 255)) >>> 0;
+      const lr = 1 - Math.exp(-r * gain), lg = 1 - Math.exp(-g * gain), lb = 1 - Math.exp(-b * gain), m = Math.max(lr, lg, lb);
+      if (m < 0.004) { gPx[j] = 0; continue; }
+      // Stored as see-through light (strength = how bright it is), so the "screen" blend also lights the empty sky.
+      const k = 255 / m;
+      gPx[j] = (((255 * m) << 24) | (((lb * k) & 255) << 16) | (((lg * k) & 255) << 8) | ((lr * k) & 255)) >>> 0;
     }
     gctx.putImageData(gImg, 0, 0); glowShown = true;
   }
@@ -3131,7 +3182,8 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   document.addEventListener('visibilitychange', () => { if (document.hidden) writeSave(); });
 
   function frame() {
-    if (drawing && tool !== ERASE) {
+    if (drawing && tool === BLENDER) blend(curX, curY); // keeps whirring while you hold it
+    else if (drawing && tool !== ERASE && tool !== BLENDER) {
       // Holding still keeps pouring.
       const k = KIND[tool];
       if (k === K.powder || k === K.liquid || k === K.gas || k === K.fire || k === K.cloud || k === K.float || k === K.skypowder || baseOf(tool) === M.LIGHTNING) dab(curX, curY);
@@ -3152,7 +3204,10 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     } else if (!quietNow) { quietNow = true; SND.ambient(null); } // paused: the world goes quiet
     world.render(px);
     ctx.putImageData(image, 0, 0);
+    if (nightDim > 0) { ctx.save(); ctx.globalCompositeOperation = 'source-atop'; ctx.fillStyle = `rgba(10, 12, 34, ${nightDim.toFixed(3)})`; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore(); }
     drawGlow();
+    // The glow is blended into the world picture here (a CSS blend on a layer above made Safari flash dark squares).
+    if (glowShown) { ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.imageSmoothingEnabled = true; ctx.drawImage(glowCv, 0, 0, bw * BD, bh * BD); ctx.restore(); }
     if (thermal && (frameTick & 3) === 0) drawHeat();
     if (skyMode !== 'classic' && (frameTick % 6) === 0) updateSky();
     if (!paused && (frameTick % 60) === 30) scanWorld();
@@ -3228,7 +3283,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 13, update 54';
+  const GAME_VERSION = 'Oct 13, update 59';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave, sound: SND };
 })();

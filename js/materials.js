@@ -59,7 +59,7 @@
   // Ids from BUILTIN up to EXTRA-1, and from SLOTS2 up to COUNT-1, are kept free for things the AI
   // invents. The grid stores ids in 16 bits, so there's plenty of room: the third wave of built-ins
   // lives at 254..319 and the second block of invention slots starts at 320.
-  const BUILTIN = 109, EXTRA = 225, SLOTS2 = 320, COUNT = 512;
+  const BUILTIN = 109, EXTRA = 225, SLOTS2 = 320, COUNT = 1024; // 820 invention slots
   const isSlot = (id) => (id >= BUILTIN && id < EXTRA) || (id >= SLOTS2 && id < COUNT);
 
   /* kind: how it moves.  density: heavier things sink through lighter
