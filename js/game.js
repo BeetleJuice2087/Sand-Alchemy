@@ -731,7 +731,7 @@
     resetSearch($('#book-search')); runBookSearch('');
     $('#book').hidden = false;
   }
-  function openSettings() { renderAIBox(); $('#inv-count').textContent = `Inventions: ${invCount()} of ${invMax()}`; $('#settings').hidden = false; }
+  function openSettings() { renderAIBox(); $('#inv-count').textContent = `Inventions: ${invCount()}`; $('#settings').hidden = false; }
   $('#btn-settings').addEventListener('click', openSettings);
   $('#settings-close').addEventListener('click', () => { $('#settings').hidden = true; });
   $('#btn-book').addEventListener('click', openBook);
@@ -741,7 +741,7 @@
   /* ---------------- Cauldron: the mixing panel ----------------
      Pick two discovered ingredients and brew. Magic results are discovered
      straight away and land in the toolbar. */
-  const { MAGIC, RX, traitMix } = window.SandMats;
+  const { MAGIC, magic, setMagic, rxOf, traitMix } = window.SandMats;
   /* ---------------- Inventions (the Cauldron spirit / AI) ----------------
      Pairs with no recipe of their own can ask the AI (a small Cloudflare
      Worker, see /worker) to invent something new. The AI only fills in a
@@ -841,10 +841,15 @@
     t = String(t || '').replace(/[<>{}\[\]\\]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
     return BAD_WORDS.test(t) ? '' : t;
   }
+  // Name lookups go through an index (with thousands of inventions, scanning every material each time was slow).
+  let nameIndex = null;
   function findByName(name) {
     const k = normName(name); if (!k) return 0;
-    for (let m = 1; m < COUNT; m++) if (MATS[m] && !MATS[m].reserved && !MATS[m].hidden && normName(MATS[m].name) === k) return m;
-    return 0;
+    if (!nameIndex) {
+      nameIndex = new Map();
+      for (let m = 1; m < COUNT; m++) if (MATS[m] && !MATS[m].reserved && !MATS[m].hidden) { const n = normName(MATS[m].name); if (!nameIndex.has(n)) nameIndex.set(n, m); }
+    }
+    return nameIndex.get(k) || 0;
   }
   const FALLBACK_SPRITES = {
     fly: ['a.a..', '.aaab', '.....'], flutter: ['a.a', '.b.', 'a.a'], swim: ['.aa..', 'aaaab', '.aa..'], drift: ['.aa.', 'aaaa', 'b.b.', '.b.b'],
@@ -1286,7 +1291,12 @@
   const multiKey = (ids) => ids.slice().sort((x, y) => x - y).join('+');
   const invMax = () => { let n = 0; for (let id = 1; id < COUNT; id++) if (isSlot(id)) n++; return n; };
   const invCount = () => { let n = 0; for (let id = 1; id < COUNT; id++) if (isSlot(id) && !MATS[id].reserved) n++; return n; };
-  function freeSlot() { for (let id = 1; id < COUNT; id++) if (isSlot(id) && MATS[id].reserved) return id; return 0; }
+  let slotHint = 1; // where the last free slot was found (slots fill up in order)
+  function freeSlot() {
+    for (let id = slotHint; id < COUNT; id++) if (isSlot(id) && MATS[id].reserved) { slotHint = id; return id; }
+    for (let id = 1; id < slotHint; id++) if (isSlot(id) && MATS[id].reserved) { slotHint = id; return id; }
+    return 0;
+  }
   // Add an invention to the game (from the AI, or from storage / a backup).
   function registerInvention(rec) {
     const a = rec.a, b = rec.b;
@@ -1295,7 +1305,7 @@
     if (ing.some((m) => !(m > 0 && m < COUNT) || !MATS[m] || MATS[m].reserved)) return 0;
     const same = rec.id ? 0 : findByName(rec.spec && rec.spec.name); // (a saved invention keeps its place even if a built-in later gets the same name)
     if (same) { // the AI named something that already exists
-      if (parts) MULTI.set(multiKey(parts), same); else { MAGIC[a * COUNT + b] = same; MAGIC[b * COUNT + a] = same; }
+      if (parts) MULTI.set(multiKey(parts), same); else setMagic(a, b, same);
       return same;
     }
     // Objects are out of the game: if the AI still dreams one up (or an old one comes back from the shared
@@ -1305,17 +1315,20 @@
     const id = isSlot(rec.id) && MATS[rec.id].reserved ? rec.id : freeSlot(); if (!id) return 0;
     if (entry.layEgg) entry.abil.lays = [id, 0.0005];
     invent(id, entry, parts ? 0 : a, parts ? 0 : b);
+    if (nameIndex) { const n = normName(MATS[id].name); if (!nameIndex.has(n) || nameIndex.get(n) > id) nameIndex.set(n, id); }
     if (parts) MULTI.set(multiKey(parts), id);
     window.SandSim.refresh(id);
     inventions = inventions.filter((r) => r.id !== id).concat([parts ? { id, a, b, parts, spec: rec.spec } : { id, a, b, spec: rec.spec }]);
     if (entry.object) { // an object invented before they were taken out: kept hidden (things brewed from it still work), but gone from the game
-      MATS[id].hidden = true; MATS[id].retired = true;
-      if (parts) MULTI.delete(multiKey(parts)); else { MAGIC[a * COUNT + b] = 0; MAGIC[b * COUNT + a] = 0; }
+      MATS[id].hidden = true; MATS[id].retired = true; nameIndex = null;
+      if (parts) MULTI.delete(multiKey(parts)); else setMagic(a, b, 0);
       return id;
     }
     invCatCache.delete(id);
-    if (!INV_GROUP.items.includes(id)) INV_GROUP.items.push(id);
-    INV_GROUP.items.sort(byName);
+    // Keep the list in A-Z order by slotting the new one into place (sorting the whole list each time was slow).
+    const list = INV_GROUP.items, at = list.indexOf(id); if (at >= 0) list.splice(at, 1);
+    let lo = 0, hi = list.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (byName(list[mid], id) <= 0) lo = mid + 1; else hi = mid; }
+    list.splice(lo, 0, id);
     return id;
   }
   /* Deleting an invention also deletes anything that was brewed from it,
@@ -1828,7 +1841,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   ];
   function worldProducts(a, b) {
     const out = new Set();
-    [[a, b], [b, a]].forEach(([x, y]) => (RX[x * COUNT + y] || []).forEach((r) => {
+    [[a, b], [b, a]].forEach(([x, y]) => (rxOf(x, y) || []).forEach((r) => {
       [r.a, r.b, r.alt && r.alt.a].forEach((m) => { if (m > 0 && m !== x && m !== y) out.add(m); });
     }));
     WORLD_PAIRS.forEach(([x, y, m]) => { if ((x === a && y === b) || (x === b && y === a)) out.add(m); });
@@ -1848,7 +1861,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     let cur = ids[0], fromRecipe = true; const steps = [];
     for (let k = 1; k < ids.length; k++) {
       const nx = ids[k];
-      let out = MAGIC[cur * COUNT + nx], how = 'recipe';
+      let out = magic(cur, nx), how = 'recipe';
       if (!out) { const wp = worldProducts(cur, nx); if (wp.length) { out = wp[0]; how = 'world'; } }
       if (!out) { const t = traitMix(cur, nx); if (t < 0) return { steps, end: 'void', at: nx }; if (t > 0) { out = t; how = 'mix'; } }
       if (!out) return { steps, end: 'fizzle', at: nx, cur };
@@ -1861,7 +1874,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (used().some((v) => !v) || thinking) return;
     if (nSlots > 2) return brewMany(noAI);
     const slotA = slots[0], slotB = slots[1];
-    const out = MAGIC[slotA * COUNT + slotB];
+    const out = magic(slotA, slotB);
     // No recipe and nothing they make in the world: ask the Cauldron spirit to invent something.
     if (!out && noAI !== true && aiReady() && !worldProducts(slotA, slotB).length && traitMix(slotA, slotB) >= 0) { inventFor([slotA, slotB]); return; }
     const res = document.createElement('div'); res.className = 'res';
@@ -2661,11 +2674,13 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     ORDER.forEach((m) => { if (MATS[m].start) depth.set(m, 0); });
     const known = () => [...depth.keys()];
     for (let round = 0; round < 25; round++) {
-      let grew = false; const ks = known();
-      for (const a of ks) for (const b of ks) {
-        const out = MAGIC[a * COUNT + b]; if (!out || depth.has(out) || !world.discovered[out]) continue;
-        depth.set(out, Math.max(depth.get(a), depth.get(b)) + 1); grew = true;
-      }
+      let grew = false; const got = [];
+      MAGIC.forEach((out, key) => { // every recipe whose two ingredients are already reachable
+        const a = Math.floor(key / COUNT), b = key % COUNT;
+        if (depth.has(out) || !world.discovered[out] || !depth.has(a) || !depth.has(b)) return;
+        got.push([out, Math.max(depth.get(a), depth.get(b)) + 1]);
+      });
+      got.forEach(([out, d]) => { if (!depth.has(out) || depth.get(out) > d) { depth.set(out, d); grew = true; } });
       if (!grew) break;
     }
     return depth;
@@ -2796,7 +2811,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     // 11. AI
     const g11 = section('Cauldron spirit & AI inventions');
     tile(g11, fmt(live.length), 'AI inventions in your book'); tile(g11, fmt(Math.max(ST.invMade, live.length)), 'lifetime AI creations');
-    tile(g11, `${invCount()} / ${invMax()}`, 'invention capacity'); tile(g11, fmt(ST.invDeleted), 'inventions deleted'); tile(g11, fmt(ST.invRepeat), 'times a brew gave back an invention you had');
+    tile(g11, fmt(invCount()), 'inventions made'); tile(g11, fmt(ST.invDeleted), 'inventions deleted'); tile(g11, fmt(ST.invRepeat), 'times a brew gave back an invention you had');
     const favInv = topOf(ST.paintBy, (k) => MATS[k] && MATS[k].invented && !MATS[k].hidden)[0]; tile(g11, favInv ? nm(+favInv[0]) : '—', 'favorite invention (most painted)');
     tile(g11, invShelves(live).map((sh) => sh.label + ' ' + sh.items.length).join(' · ') || '—', 'inventions by shelf', 'wide');
     tile(g11, `${fmt(ST.aiOnline)} · ${fmt(ST.aiDevice)}`, 'online · on-device inventions');
@@ -3283,7 +3298,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 13, update 59';
+  const GAME_VERSION = 'Oct 13, update 61';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave, sound: SND };
 })();
