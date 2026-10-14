@@ -82,7 +82,7 @@
     // The world is stored as compact strings: material, age and memory
     // (age keeps fires and growing trees going; memory is what a mirror copies).
     // Version 2 stores material, memory and paint as two bytes per cell (ids go past 255).
-    return { v: 2, disc, unseen: [...unseen], hinted: [...hinted], revealed: [...revealed], favs, tool, brush, inv: inventions,
+    return { v: 2, disc, unseen: [...unseen], hinted: [...hinted], revealed: [...revealed], favs, tool, brush, inv: inventions, stats: ST,
       world: { w: world.w, h: world.h, zg: world.zeroG ? 1 : undefined, dt: world.dayT ? +world.dayT.toFixed(4) : undefined, t: pack16(world.exportT()), l: pack(world.life), f: pack16(world.fuel), p: world.hasTint ? pack16(world.tint) : undefined,
         c: world.creatures.map((c) => [c.k, Math.round(c.x), Math.round(c.y), c.dir, c.into || 0, c.s === 5 ? 5 : 0, Math.min(c.age || 0, 99999)]) } };
   }
@@ -147,6 +147,7 @@
       inventions.forEach((r) => { if (r && MATS[r.id] && !MATS[r.id].reserved) next.discovered[r.id] = 1; });
       if (saved) {
         unseen = new Set(saved.unseen || []); hinted = new Set(saved.hinted || []); revealed = new Set(saved.revealed || []);
+        if (saved.stats && typeof saved.stats === 'object') { let had = null; try { had = localStorage.getItem(STATS_KEY); } catch (e) { /* fine */ } if (!had) { Object.assign(ST, saved.stats); saveStats(); } } // stats from a restored backup
         if (Array.isArray(saved.favs) && !favs.length) { favs = saved.favs.filter((m) => m > 0 && m < COUNT); try { localStorage.setItem(FAV_KEY, JSON.stringify(favs)); } catch (e) { /* ignore */ } }
         if (!(saved.v >= 2)) { if (saved.tool === 255) saved.tool = ERASE; else if (saved.tool === 254) saved.tool = DROPPER; } // older saves
         if (saved.tool === ERASE || saved.tool === DROPPER || (saved.tool && saved.tool !== M.CAULDRON && next.discovered[saved.tool])) tool = saved.tool;
@@ -293,6 +294,7 @@
   addEventListener('pointerdown', (e) => { const p = $('#world-panel'); if (!p.hidden && !p.contains(e.target) && !$('#world-btn').contains(e.target)) { p.hidden = true; $('#world-btn').setAttribute('aria-expanded', 'false'); } }, true);
   setSpeed(1);
   function setZeroG(v, quiet) {
+    if (v && !world.zeroG && !quiet) ST.zeroGUses++;
     world.zeroG = !!v; $('#wp-zerog').checked = world.zeroG; $('#world-btn-zg').hidden = !world.zeroG;
     if (!quiet) { note(world.zeroG ? 'Zero gravity: everything floats' : 'Gravity is back'); writeSaveSoon(); }
   }
@@ -324,6 +326,7 @@
   // Zoom so that the point (sx, sy) in the play area stays under the finger / cursor.
   function zoomAt(z, sx, sy) {
     z = Math.max(1, Math.min(ZMAX, z));
+    if (zoom <= 1.001 && z > 1.001) ST.zoomUses++;
     const u = (sx - ox) / dc(), v = (sy - oy) / dc();
     zoom = z; ox = sx - u * dc(); oy = sy - v * dc(); layoutView();
   }
@@ -427,7 +430,7 @@
   $('#inworld-all').addEventListener('click', () => { $('#inworld').hidden = true; $('#confirm').hidden = false; });
   $('#confirm-no').addEventListener('click', () => { $('#confirm').hidden = true; });
   $('#confirm-yes').addEventListener('click', () => {
-    snapshot();
+    snapshot(); ST.clears++;
     world.t.fill(0); world.life.fill(0); world.fuel.fill(0); world.creatures = [];
     world.skin.fill(0); world.tint.fill(0); world.hasTint = false;
     world.flying = []; world.bhStore = []; world.pendingBlasts = []; world.pendingFrost = []; world.holes = null; world.portOut = []; // nothing left over from the old world
@@ -514,7 +517,10 @@
       s.bh = (world.bhStore || []).slice(0, 12000); // what the black holes have swallowed, so white holes keep going
       if (world.stickHome) s.home = world.stickHome;
       const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, at: Date.now(), w: world.w, h: world.h, thumb: worldThumb(), data: await squeeze(JSON.stringify(s)) };
-      await WDB.put(rec);
+      await WDB.put(rec); ST.worldsSaved++;
+      { let n = 0; const kinds = new Set(); for (let i = 0; i < world.t.length; i++) { const v = world.t[i]; if (v) { n++; kinds.add(v); } }
+        if (!ST.bigWorld || n > ST.bigWorld.n) ST.bigWorld = { name, n }; if (!ST.divWorld || kinds.size > ST.divWorld.n) ST.divWorld = { name, n: kinds.size }; }
+      saveStats();
       input.value = ''; note('Saved \u201c' + name + '\u201d'); renderWorlds();
     } catch (e) { note('Couldn\u2019t save it: this browser is out of room. Delete an old world and try again.'); }
     btn.disabled = false; btn.textContent = 'Save this world';
@@ -532,6 +538,7 @@
     if (sw.home) old.stickHome = sw.home;
     old.discovered.set(world.discovered); // loading never changes what you've discovered
     world.copyFrom(old); setZeroG(world.zeroG, true);
+    ST.worldsLoaded++; r.loads = (r.loads || 0) + 1; WDB.put(r).catch(() => {});
     world.bhStore = [];
     const ok = (m) => Number.isInteger(m) && m >= 0 && m < COUNT && !(m && MATS[m].reserved);
     if (Array.isArray(sw.bh)) for (let k = 0; k + 1 < sw.bh.length; k += 2) if (sw.bh[k] && ok(sw.bh[k]) && ok(sw.bh[k + 1])) world.bhStore.push(sw.bh[k], sw.bh[k + 1]); // (material, skin) pairs
@@ -546,6 +553,7 @@
   /* ---------------- Discoveries ---------------- */
   const toastQueue = []; let toastBusy = false;
   function discovered(m) {
+    statFind(m);
     if (m === M.PORTALIN && world && !world.discovered[M.PORTALOUT]) { world.discovered[M.PORTALOUT] = 1; setTimeout(() => discovered(M.PORTALOUT), 0); } // portals come as a pair
     unseen.add(m);
     toastQueue.push(m);
@@ -705,11 +713,11 @@
         rv.setAttribute('aria-label', 'Reveal what this is');
         rv.hidden = !hinted.has(m);
         rv.addEventListener('click', (e) => {
-          e.stopPropagation(); revealed.add(m); hinted.add(m); writeSaveSoon();
+          e.stopPropagation(); revealed.add(m); hinted.add(m); writeSaveSoon(); ST.revealsUsed++;
           c.classList.add('revealed'); showReal(); b.textContent = mat.name; s.textContent = how + ' (not found yet)';
           c.removeAttribute('role'); c.tabIndex = -1; rv.remove();
         });
-        const hint = () => { if (revealed.has(m)) return; hinted.add(m); c.classList.add('hinted'); s.textContent = mat.hint; rv.hidden = false; writeSaveSoon(); };
+        const hint = () => { if (revealed.has(m)) return; if (!hinted.has(m)) ST.hintsUsed++; hinted.add(m); c.classList.add('hinted'); s.textContent = mat.hint; rv.hidden = false; writeSaveSoon(); };
         c.addEventListener('click', hint);
         c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hint(); } });
         txt.append(rv);
@@ -851,24 +859,79 @@
     return OLD_EXAMPLES.some((ex) => { const e = maskOf(ex); let both = 0; m.forEach((k) => { if (e.has(k)) both++; }); return both / (m.size + e.size - both) >= 0.7; });
   }
   function seeded(text) { let h = 2166136261; for (const ch of String(text)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return (n) => { h = Math.imul(h ^ (h >>> 15), 2246822507); h ^= h >>> 13; return ((h >>> 0) % n); }; }
-  const BODY_WORDS = [ // matched at the start of words, so "howls" isn't an owl
-    ['walker', /\b(dog|pup|puppy|cat|kitten|kitty|fox|wolf|horse|pony|deer|cow|pig|piglet|goat|sheep|lamb|lion|tiger|bear|cub|rabbit|bunny|mouse|rat|hamster|lizard|dino|turtle|tortoise|frog|toad|camel|llama|elephant|rhino|hippo|unicorn|yak|boar|otter|ferret|raccoon|skunk|hedgehog)/],
-    ['serpent', /\b(snake|serpent|worm|eel|wyrm|naga|noodle|centipede|millipede)/], ['fish', /\b(fish|shark|whale|minnow|guppy|carp|trout|salmon|dolphin|orca|ray|piranha|goldfish)/],
-    ['flutter', /\b(butterfly|butterflies|moth|fairy|fairies|pixie|bee|wasp|dragonfly|firefly|sprite)/], ['bird', /\b(bird|owl|crow|raven|parrot|eagle|hawk|duck|goose|swan|chick|robin|sparrow|pigeon|flamingo|phoenix|griffin|bat)\b/],
-    ['spider', /\b(spider|crab|scorpion|octopus|octo|squid|tarantula)/], ['bug', /\b(bug|beetle|ant|ladybug|tick|mite|cricket|grasshopper|roach|weevil|scarab|snail|slug)\b/],
-    ['blob', /\b(slime|blob|jelly|goo|ooze|puddle|gel|mochi|pudding|marshmallow)/],
-    ['biped', /\b(golem|robot|knight|man|men|person|wizard|witch|elf|gnome|goblin|troll|yeti|zombie|ghoul|skeleton|ninja|king|queen|imp|monkey|ape|gorilla|kid|boy|girl|soldier|pirate|warrior|giant|ogre|mummy|vampire|alien)\b/],
+  /* Body shapes for invention creatures, picked from the words in the name. The LAST creature word in the
+     name wins ("Toad Bot" is a robot, "Magma Crab" is a crab). Words are matched at the start of words. */
+  const BODY_WORDS = [
+    ['horse', /\b(horses?|pony|ponies|unicorns?|stallions?|mares?|steeds?|colts?|pegasus)/g],
+    ['frog', /\b(frogs?|toads?|wogs?)\b/g],
+    ['walker', /\b(dogs?|pup|puppy|cats?|kitten|kitty|fox|foxes|wolf|wolves|deer|cows?|pigs?|piglet|goats?|sheep|lamb|lions?|tigers?|bears?|cub|rabbits?|bunny|bunnies|mouse|mice|rats?|hamster|lizards?|dino\w*|camel|llama|elephant|rhino|hippo|yak|boar|otter|ferret|raccoon|skunk|hedgehog|turtle|tortoise|beasts?|critters?|hounds?|bull|ox)\b/g],
+    ['serpent', /\b(snakes?|serpents?|worm\w*|eels?|wyrms?|naga|noodle|centipede|millipede)/g],
+    ['octopus', /\b(octopus\w*|octo|squids?|kraken|cuttlefish)/g],
+    ['jelly', /\b(jellyfish|medusa)/g],
+    ['fish', /\b(fish\w*|sharks?|whales?|minnow|guppy|carp|trout|salmon|dolphins?|orca|piranha|goldfish|pollywog|tadpoles?)/g],
+    ['crab', /\b(crabs?|lobsters?|scorpions?|shrimp)/g],
+    ['spider', /\b(spiders?|tarantula|weavers?|spinners?|snares?)/g],
+    ['bee', /\b(bees?|wasps?|hornets?|bumble\w*)\b/g],
+    ['flutter', /\b(butterfly|butterflies|moths?|fairy|fairies|pixie|dragonfly|firefly|sprites?|wings?)\b/g],
+    ['bat', /\b(bats?)\b/g],
+    ['bird', /\b(birds?|owls?|crows?|ravens?|parrots?|eagles?|hawks?|ducks?|ducklings?|chicks?|chickens?|hens?|goose|geese|swans?|robin|sparrow|pigeon|flamingo|phoenix|griffin|roost|flyers?|falcons?|penguins?)\b/g],
+    ['snail', /\b(snails?|slugs?|mudslug)\b/g],
+    ['bug', /\b(bugs?|beetles?|ants?|ladybugs?|ticks?|mites?|crickets?|grasshoppers?|roach|weevils?|scarabs?|carriers?)\b/g],
+    ['blob', /\b(slimes?|blobs?|jelly|goo|ooze|puddle|gel|mochi|pudding|marshmallow|glob|sludge|gloop)/g],
+    ['ghost', /\b(ghosts?|wraiths?|spirits?|phantoms?|spect(er|re)s?|spook\w*|wisps?|haunt\w*|banshee)/g],
+    ['biped', /\b(golems?|robots?|bots?|knights?|man|men|guards?|person|wizards?|witch|elf|elves|gnomes?|goblins?|trolls?|yeti|zombies?|skeletons?|ninja|king|queen|imp|monkeys?|apes?|gorilla|kid|soldiers?|pirates?|warriors?|giants?|ogres?|mummy|vampires?|aliens?|androids?|cyborgs?|sentinels?)\b/g],
+    ['tree', /\b(trees?|groves?|bush|shrubs?|oaks?|willow)\b/g],
+    ['mushroom', /\b(mushrooms?|shrooms?|fung\w*|toadstool)/g],
+    ['flower', /\b(sprouts?|blooms?|blossoms?|flowers?|petals?|thorns?|vines?|ferns?|cactus|moss|buds?|lily|rose)\b/g],
+    ['flame', /\b(flames?|blaze|embers?|inferno|flares?|pyro\w*|torch|candle|fires?)\b/g],
+    ['cloud', /\b(clouds?|fog\w*|mists?|\w*storms?|nimbus|vapou?r|puffs?|tempest)\b/g],
+    ['star', /\b(stars?|starfish|comets?|meteors?|nova|moon)\b/g],
+    ['orb', /\b(bubbles?|orbs?|balls?|spheres?|pearl)\b/g],
+    ['spiky', /\b(spark\w*|burst\w*|blasts?|glitter|crack\w*|thunder\w*|lightning|volt\w*|zap\w*|bolts?|shock\w*|static)/g],
   ];
-  function bodyType(name, desc, move) {
-    const n = name.toLowerCase(), t = (name + ' ' + desc).toLowerCase();
-    for (const [k, re] of BODY_WORDS) if (re.test(n)) return k; // the name decides first
-    for (const [k, re] of BODY_WORDS) if (re.test(t)) return k;
-    return { fly: 'bird', flutter: 'flutter', swim: 'fish', burrow: 'serpent', slither: 'serpent', drift: 'blob', paddle: 'bird' }[move] || 'walker';
+  // The creature word that comes last in the text (or '' if there isn't one).
+  function lastBodyAt(text) {
+    let best = '', at = -1;
+    for (const [k, re] of BODY_WORDS) { re.lastIndex = 0; let m; while ((m = re.exec(text))) { if (m.index >= at) { at = m.index; best = k; } } }
+    return { kind: best, at };
   }
+  const lastBody = (text) => lastBodyAt(text).kind;
+  function bodyType(name, desc, move) {
+    return lastBody(name.toLowerCase()) || lastBody(String(desc || '').toLowerCase())
+      || { fly: 'bird', flutter: 'flutter', swim: 'fish', burrow: 'serpent', slither: 'serpent', drift: 'cloud', paddle: 'bird', hop: 'frog', leap: 'walker' }[move] || 'walker';
+  }
+  // Fixed little pictures (a = body colour, b = second colour, c = legs/details, d = eyes). Two or three of each, picked by name.
+  const SHAPES = {
+    crab: [['c...c', 'cc.cc', '.aaa.', 'adada', 'c.c.c'], ['c.....c', 'cc...cc', '.aaaaa.', 'aadadaa', '.c.c.c.']],
+    octopus: [['.aaa.', 'aaaaa', 'adada', 'aaaaa', 'c.c.c'], ['..aaa..', '.aaaaa.', '.adada.', 'caaaaac', 'c.c.c.c']],
+    jelly: [['.aaa.', 'aadaa', 'aaaaa', 'c.c.c', '.c.c.'], ['.bbb.', 'babab', 'aaaaa', 'c.c.c']],
+    bat: [['a.....a', 'aa.d.aa', '.aaaaa.', '...a...'], ['aa...aa', '.aadaa.', '..aaa..']],
+    ghost: [['.aaa.', 'adada', 'aaaaa', 'aaaaa', 'a.a.a'], ['.aaa.', 'aaaaa', 'adbda', 'aaaaa', '.a.a.']],
+    frog: [['d...d', 'aa.aa', 'aaaaa', 'abbba', 'c...c'], ['.d.d.', 'aaaaa', 'aaaaa', 'c.a.c']],
+    bee: [['.cc...', 'cc....', 'ababad', '.c.c..'], ['..cc..', '.cc...', 'babab.', 'ababad']],
+    snail: [['..bb..', '.bbab.', '.babb.', 'aaaaad'], ['.bbb...', 'bbabb..', 'babbb.d', 'aaaaaaa']],
+    tree: [['.bbb.', 'bbbbb', 'bdbdb', '.bab.', '..a..', '.c.c.'], ['..b..', '.bbb.', 'bbdbd', '.bbb.', '..a..', '..a..']],
+    mushroom: [['.bbb.', 'bbabb', 'bbbbb', '.ada.', '.aaa.', '.c.c.'], ['bbbbb', 'babab', '.ada.', '.aaa.']],
+    flower: [['.b.b.', 'bbabb', '.bdb.', '..c..', '.ccc.'], ['b.b.b', '.bab.', 'babab', '.bdb.', '..c..'], ['.bbb.', 'bbabb', 'bdbdb', '.bbb.', '..c..']],
+    flame: [['..a..', '.aa..', '.aba.', 'abdba', '.aaa.'], ['.a...', '.aa.a', 'abaaa', 'adbda', '.aaa.']],
+    cloud: [['.aa.aa.', 'aaaaaaa', 'aadaada', '.aaaaa.', '.c.c.c.'], ['..aaa..', '.aaaaa.', 'aadadaa', 'aaaaaaa']],
+    star: [['..a..', 'aaaaa', '.ada.', '.a.a.'], ['..b..', '.aaa.', 'baaab', '.dad.', 'a...a']],
+    orb: [['.aaa.', 'abaaa', 'adada', 'aaaaa', '.aaa.'], ['..aaa..', '.abaaa.', 'aadadaa', '.aaaaa.', '..aaa..']],
+    spiky: [['c.a.c', '.aaa.', 'adada', '.aaa.', 'c.a.c'], ['..c..', 'c.a.c', '.ada.', 'caaac', '..c..']],
+  };
   function drawCreature(name, desc, move) {
     const r = seeded(name), kind = bodyType(name, desc, move);
     const grid = (w, h) => Array.from({ length: h }, () => Array(w).fill('.'));
     const out = (gr) => gr.map((row) => row.join(''));
+    if (SHAPES[kind]) { const list = SHAPES[kind]; return list[r(list.length)]; }
+    if (kind === 'horse') { // a long neck and a head held high (unicorns and pegasus get a horn)
+      const horn = /unicorn|pegasus|horn/i.test(name), L = 5 + r(2), gr = grid(L + 2, 5);
+      if (horn) gr[0][L + 1] = 'c';
+      gr[1][L] = 'b'; gr[1][L + 1] = 'd'; gr[2][L] = 'a';
+      for (let x = 0; x < L; x++) gr[3][x] = 'a'; gr[3][L] = 'a'; gr[2][0] = 'b'; // a swishy tail
+      [1, 2, L - 2, L - 1].forEach((x) => { gr[4][x] = 'c'; });
+      return out(gr);
+    }
     if (kind === 'walker') { // four legs: long or short, tall or flat, maybe a tail, ears, a long neck or spots
       const L = 5 + r(3), H = 1 + r(2), ears = r(2), neck = r(5) === 0, tail = r(3) > 0, spots = r(3) === 0;
       const top = ears ? 1 : 0, bodyY = top + (neck ? 2 : 1), gr = grid(L + 2, bodyY + H + 1);
@@ -881,7 +944,9 @@
       (L >= 6 ? [1, 3, L - 3, L - 1] : [0, L - 1]).forEach((x) => { gr[bodyY + H][x] = 'c'; });
       return out(gr);
     }
-    if (kind === 'biped') { // stands up: head, arms, legs
+    if (kind === 'biped') { // stands up: head, arms, legs (robots are boxy with an antenna)
+      const bot = /\b(robots?|bots?|android|cyborg|golem|sentinel|tech)\b/i.test(name);
+      if (bot) return r(2) ? ['..c..', '.bdb.', '.aaa.', 'caaac', '.a.a.', '.c.c.'] : ['.c.c.', 'bdbdb', '.aaa.', 'caaac', '.c.c.'];
       const wide = r(2), tall = r(2), w = wide ? 5 : 4, gr = grid(w, tall ? 5 : 4), bw = wide ? 3 : 2;
       gr[0][1] = 'b'; gr[0][2] = 'd'; if (wide) gr[0][3] = 'b';
       (tall ? [1, 2, 3] : [1, 2]).forEach((y, k) => { for (let x = 1; x < 1 + bw; x++) gr[y][x] = 'a'; if (k === 0) { gr[y][0] = 'c'; gr[y][w - 1] = 'c'; } });
@@ -925,12 +990,11 @@
       return out(gr);
     }
     if (kind === 'flutter') return r(2) ? ['aa.aa', 'abdba', '.a.a.'] : ['a.a', '.d.', 'a.a']; // big wings
-    const w = 5 + r(2) * 2, gr = grid(w, 3); // a blob: a dome with eyes
-    for (let x = 1; x < w - 1; x++) gr[0][x] = 'a';
-    for (let x = 0; x < w; x++) { gr[1][x] = 'a'; gr[2][x] = r(4) === 0 ? 'b' : 'a'; }
-    gr[1][Math.floor(w / 2) - 1] = 'd'; gr[1][Math.floor(w / 2) + 1] = 'd';
-    return out(gr);
+    // A slime: a dome with eyes and a drip or two.
+    return r(2) ? ['..aaa..', '.aaaaa.', 'aadadaa', 'aaaaaaa', '.b...b.'] : ['.aaaa.', 'aaaaaa', 'adaada', 'aaaaaa', 'b..b..'];
   }
+  // Does the name say what kind of body it has? Then the game draws it, rather than trusting the AI's own sketch.
+  const nameSaysBody = (name) => !!lastBody(name.toLowerCase());
   // Turn the AI's answer into a safe material entry (or null if it doesn't make sense).
   const NOT_LIKE = new Set([M.CAULDRON, M.SPARKLE, M.ROCKET, M.WALL, M.PORTALIN, M.PORTALOUT]);
   function likeOk(m) { return isBuiltin(m) && !MATS[m].creature && !MATS[m].object && !MATS[m].reserved && KIND[m] !== K.empty && !NOT_LIKE.has(m); }
@@ -968,15 +1032,17 @@
     [M.ANT]: 'walk', [M.SNAIL]: 'climb', [M.LIZARD]: 'walk', [M.PENGUIN]: 'amphibian', [M.CRAB]: 'wade', [M.DRAGON]: 'fly', [M.COW]: 'walk',
     [M.SNAKE]: 'slither', [M.RABBIT]: 'leap', [M.JELLYFISH]: 'drift', [M.TADPOLE]: 'swim', [M.CATERPILLAR]: 'climb', [M.BUTTERFLY]: 'flutter' };
   const KIN_WORDS = [[/\bslugs?\b/i, M.SNAIL], [/\brats?\b/i, M.MOUSE], [/\b(bull|ox|cattle)\b/i, M.COW], [/\bserpents?\b/i, M.SNAKE],
-    [/\bmoths?\b/i, M.BUTTERFLY], [/\bsquids?\b/i, M.OCTOPUS], [/\b(hare|bunny|bunnies)\b/i, M.RABBIT], [/\b(sparrow|crow|raven|chick|robin|finch)s?\b/i, M.BIRD],
+    [/\bmoths?\b/i, M.BUTTERFLY], [/\bsquids?\b/i, M.OCTOPUS], [/\b(hare|bunny|bunnies)\b/i, M.RABBIT], [/\b(sparrow|crow|raven|robin|finch)s?\b/i, M.BIRD],
     [/\b(toad)s?\b/i, M.FROG], [/\b(wyrm|drake)s?\b/i, M.DRAGON], [/\b(pony|ponies|horse)\b/i, M.UNICORN], [/\bbeetles?\b/i, M.ANT]];
   let KIN_LIST = null;
   function kinCreature(name) {
     if (!KIN_LIST) KIN_LIST = MATS.filter((m, i) => m && isBuiltin(i) && m.creature && m.sprite && m.id !== M.EGG && m.move !== 'egg')
       .sort((x, y) => y.name.length - x.name.length)
       .map((m) => [new RegExp('\\b' + m.name.toLowerCase().replace(/[^a-z ]/g, '') + '(s|es)?\\b', 'i'), m.id]);
-    for (const [re, id] of KIN_LIST) if (re.test(name)) return id;
-    for (const [re, id] of KIN_WORDS) if (MATS[id] && MATS[id].sprite && re.test(name)) return id;
+    // Only when the animal is the last creature word: a "Toad Bot" is a robot, not a frog.
+    const ok = (re) => { const g = new RegExp(re.source, 'gi'); let m, at = -1; while ((m = g.exec(name))) at = m.index; return at >= 0 && at >= lastBodyAt(name.toLowerCase()).at; };
+    for (const [re, id] of KIN_LIST) if (re.test(name) && ok(re)) return id;
+    for (const [re, id] of KIN_WORDS) if (MATS[id] && MATS[id].sprite && re.test(name) && ok(re)) return id;
     return 0;
   }
   const kinMove = (k) => MATS[k].move || OLD_MOVES[k] || 'walk';
@@ -1117,7 +1183,7 @@
       while (rows.length && !/[abcd]/.test(rows[0])) rows.shift();
       while (rows.length && !/[abcd]/.test(rows[rows.length - 1])) rows.pop();
       // A broken drawing, or a copy of the old example: draw it ourselves from the name.
-      if (rows.join('').replace(/\./g, '').length < 4 || copiedExample(rows)) rows = drawCreature(name, desc, move);
+      if (nameSaysBody(name) || rows.join('').replace(/\./g, '').length < 4 || copiedExample(rows)) rows = drawCreature(name, desc, move);
       width = Math.max(...rows.map((r) => r.length)); rows = rows.map((r) => r.padEnd(width, '.'));
       const ground = !['fly', 'flutter', 'swim', 'drift'].includes(move);
       const last = rows.length - 1, rot = (r) => r.slice(1) + r[0];
@@ -1272,6 +1338,7 @@
   }
   function deleteInvention(id) {
     const gone = dependents(id);
+    ST.invDeleted += gone.size; saveStats();
     inventions = inventions.filter((r) => !gone.has(r.id));
     saveInventions();
     const w = world, n = w.w * w.h;
@@ -1376,6 +1443,7 @@
     - sprite: a tiny side-view pixel picture facing RIGHT, 2 to 5 rows of up to 7 characters. Use letters a, b, c, d for the four colours and "." for empty.
       Draw THIS creature’s own shape (long, round, tall, winged, many-legged...); every creature should look different. Format examples, not to copy: a snail [".bb...", "bbba.d", "aaaaa."], a bat ["a...a", "aabaa", ".a.a."], a robot [".bd.", "caac", ".aa.", ".c.c"]
 
+    Only make a creature when at least one ingredient is alive (an animal, an egg, a spirit or a fairy). Otherwise it is always an element.
     Only ever invent an element or a creature (never a building or object), even when the ingredients are objects or buildings.`;
     // The small on-device models draw builds badly, so they only invent elements and creatures.
     const LOCAL_SCHEMA = JSON.parse(JSON.stringify(SCHEMA));
@@ -1386,7 +1454,7 @@
     const LOCAL_SYSTEM = `You invent ONE new thing for a family-friendly falling-sand game, made from the ingredients. Reply with JSON only.
 Element example: {"name":"Glow Moss","type":"element","description":"Moss that glows softly.","colors":["#6aff8a","#2a7a3a"],"state":"powder","weight":3,"properties":["glows","grows"],"behaves_like":"Sand"}
 Creature example: {"name":"Ember Fox","type":"creature","description":"A fox with a fiery tail.","colors":["#ff7a2a","#ffd23a","#3a1a0a","#ffffff"],"movement":"walk","abilities":["fireproof"],"sprite":["a...a",".aaab","a.a.a"]}
-Rules: name is 1-3 words and NOT one of the ingredients. Mostly elements. state: powder, liquid, gas or solid. weight 1-10.
+Rules: name is 1-3 words and NOT one of the ingredients. Mostly elements. A creature only if an ingredient is alive. state: powder, liquid, gas or solid. weight 1-10.
 properties from: ${PROPS.join(', ')}. behaves_like from: ${LIKE_SHORT.join(', ')}, none.
 movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. effects (what it does to things nearby) from: ${EFFECTS.join(', ')}. sprite: 2-5 rows of up to 7 of a b c d . (a tiny side view).`;
     return { SCHEMA, SYSTEM, LOCAL_SCHEMA, LOCAL_SYSTEM };
@@ -1445,7 +1513,24 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   // The question for the AI: every ingredient on its own line.
   function brewQuestion(ids) {
     return ids.map((m, k) => { const d = describe(m); return `Ingredient ${k + 1}: ${d.name} (${d.type}${d.about ? ': ' + d.about : ''})`; }).join('\n') +
-      (ids.length > 2 ? `\nWhat ONE new thing do all ${ids.length} make together? Blend the ideas of every ingredient.` : '\nWhat new thing do they make together?');
+      (ids.length > 2 ? `\nWhat ONE new thing do all ${ids.length} make together? Blend the ideas of every ingredient.` : '\nWhat new thing do they make together?') +
+      (canMakeLife(ids) ? '' : '\nNone of these ingredients is alive, so it must be an ELEMENT (type "element"), not a creature.');
+  }
+  // A creature only comes out of the Cauldron when something alive goes in (an animal, an egg, a spirit or a fairy).
+  const canMakeLife = (ids) => ids.some((m) => MATS[m] && (MATS[m].creature || m === M.SPIRIT || m === M.FAIRY || m === M.GHOST));
+  // The AI made a creature anyway: turn it into an element with the same name, colours and powers.
+  function noLifeFrom(spec, ids) {
+    if (spec.type !== 'creature' || canMakeLife(ids)) return spec;
+    const mv = spec.movement, airy = ['fly', 'flutter', 'drift'].includes(mv), wet = ['swim', 'paddle', 'amphibian', 'wade'].includes(mv);
+    const props = [];
+    const ab = Array.isArray(spec.abilities) ? spec.abilities : [];
+    if (ab.includes('glows')) props.push('glows');
+    if (ab.includes('explodes')) props.push('explosive');
+    const out = Object.assign({}, spec, { type: 'element', state: airy ? 'gas' : wet ? 'liquid' : 'powder', weight: airy ? 1 : wet ? 4 : 5,
+      properties: props, behaves_like: spec.behaves_like || 'none' });
+    delete out.movement; delete out.sprite; delete out.abilities; delete out.hatches_into;
+    aiLog('It made a creature from things that aren\u2019t alive, so it became an element instead');
+    return out;
   }
   // Small models sometimes wrap their JSON in chatter, or run out of room half-way through.
   // Pull out the first {...} and, if it was cut off, close it up so the finished part still counts.
@@ -1689,6 +1774,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   // The dice: fill the unlocked slots with random ingredients you've found.
   function randomPick() {
     if (thinking) return;
+    ST.randoms++;
     const open = []; for (let k = 0; k < nSlots; k++) if (!locks[k]) open.push(k);
     if (!open.length) return nudgeLock(...KEYS.slice(0, nSlots));
     const pool = [...new Set(GROUPS.flatMap((grp) => grp.items))].filter((m) => world.discovered[m]);
@@ -1787,7 +1873,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       small.textContent = isNew ? 'New discovery!' : 'Already discovered';
       b.textContent = MATS[out].name;
       s.textContent = isNew ? (MATS[out].desc || 'Added to your toolbar.') : `${A} + ${B} brews ${MATS[out].name}. It's already in your toolbar.`;
-      if (MATS[out].invented) { small.textContent = isNew ? '\u2728 New invention!' : 'Already invented'; if (isNew) res.classList.add('invent'); }
+      if (MATS[out].invented) { small.textContent = isNew ? '\u2728 New invention!' : 'Already invented'; if (isNew) res.classList.add('invent'); else ST.invRepeat++; }
       if (isNew) { world.discovered[out] = 1; discovered(out); }
       res.append(sw, txt, useButton(out));
       renderIngredients();
@@ -1844,7 +1930,12 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   }
   // A little sound for each kind of result (new discoveries get the chime from their pop-up).
   function brewSound(card) {
-    if (!card || card.classList.contains('win')) return;
+    if (!card) return;
+    {
+      const w = (card.querySelector('small') || {}).textContent || '';
+      statBrew(card.classList.contains('win') ? 'new' : /Swallowed/.test(w) ? 'void' : /Nothing happened|Not a brew|Something stirs/.test(w) ? 'fizzle' : 'known', used());
+    }
+    if (card.classList.contains('win')) return;
     const what = (card.querySelector('small') || {}).textContent || '';
     if (/Swallowed/.test(what)) SND.swallowed(); else if (/Nothing happened/.test(what)) SND.fizzle(); else SND.brewed();
   }
@@ -1896,10 +1987,13 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     thinking = true; $('#brew-go').disabled = true; SND.bubbling(true);
     r.innerHTML = '<div class="res thinking"><i class="sw brewing"></i><div><small>The Cauldron bubbles\u2026</small><b>Inventing something new</b><span>The Cauldron spirit is dreaming up what ' +
       escapeHtml(listNames(ids)) + ' make together.</span></div></div>';
+    const askedAt = performance.now(); ST.aiReq++;
     const got = await askAI(ids);
-    let id = 0;
+    let id = 0; const invBefore = inventions.length;
+    if (got.spec) got.spec = noLifeFrom(got.spec, ids);
     if (got.spec) { id = registerInvention({ a: ids[0], b: ids[1], parts: ids.length > 2 ? ids.slice() : undefined, spec: got.spec }); if (id) { saveInventions(); renderPalette(); writeSaveSoon(); } }
     thinking = false; SND.bubbling(false);
+    if (inventions.length > invBefore) { statInvention(); ST.aiOk++; ST.aiMs += performance.now() - askedAt; if (aiSettings.mode === 'device') ST.aiDevice++; else ST.aiOnline++; }
     if (multiKey(used()) !== multiKey(ids) || used().length !== ids.length) { // they picked something else meanwhile
       if (id && !world.discovered[id]) { world.discovered[id] = 1; discovered(id); }
       renderSlots(); return;
@@ -2051,6 +2145,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   }
   function undo() {
     let s;
+    ST.undos++; if (performance.now() - lastBoomAt < 2000) ST.oops++;
     while ((s = undoStack.pop()) && (s.w !== world.w || s.h !== world.h)) { /* skip snapshots from before a resize */ }
     $('#btn-undo').disabled = !undoStack.length;
     if (!s) { note('Nothing to undo.'); return; }
@@ -2161,7 +2256,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (!loupeAt) return;
     const { best } = sampleAt(loupeAt[0], loupeAt[1]), badge = $('#current');
     if (!best) { badge.classList.remove('nope'); void badge.offsetWidth; badge.classList.add('nope'); return; }
-    pick(best); scrollToTool(best); writeSaveSoon();
+    pick(best); scrollToTool(best); writeSaveSoon(); ST.dropper++;
     badge.classList.remove('picked'); void badge.offsetWidth; badge.classList.add('picked');
   }
   let dropping = false;
@@ -2199,12 +2294,12 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   }
   function endLine(commit) {
     if (!line) return;
-    if (commit) { snapshot(); straight = true; petX = petY = -99; paintLine(line.x0, line.y0, line.x1, line.y1); straight = false; writeSaveSoon(); }
+    if (commit) { ST.lines++; snapshot(); straight = true; petX = petY = -99; paintLine(line.x0, line.y0, line.x1, line.y1); straight = false; writeSaveSoon(); }
     line = null; lineSvg.setAttribute('hidden', ''); $('#current').classList.remove('lining');
   }
   /* Keyboard shortcuts:  C eraser · E dropper · B brew · F search · Space pause
      · Ctrl/Cmd+Z undo · Esc closes a panel (or cancels a line). */
-  const PANELS = ['#world-panel', '#worlds', '#erase-confirm', '#settings', '#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
+  const PANELS = ['#stats', '#world-panel', '#worlds', '#erase-confirm', '#settings', '#restore-confirm', '#confirm', '#inworld', '#find', '#brew', '#book'];
   let toolBefore = M.SAND;
   function toggleTool(m) {
     if (tool === m) pick(toolBefore !== m ? toolBefore : M.SAND);
@@ -2262,11 +2357,12 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       case '.': stepOnce(); break;
       case 'g': setZeroG(!world.zeroG); break;
       case 't': setThermal(!thermal); break;
+      case 'p': setPerf(!perfOn); break;
       case 'n': setSky(['classic', 'day', 'night', 'cycle'][(['classic', 'day', 'night', 'cycle'].indexOf(skyMode) + 1) % 4]); note('Sky: ' + skyMode); break;
       case '=': case '+': zoomCentre(1.5); break;
       case '-': case '_': zoomCentre(1 / 1.5); break;
       case '0': zoom = 1; layoutView(); break;
-      case 'm': SND.set(!SND.on, SND.vol); $('#snd-on').checked = SND.on; if (!SND.on) SND.ambient(null); note(SND.on ? 'Sound on' : 'Sound off'); break;
+      case 'm': SND.set(!SND.on, SND.vol); $('#snd-on').checked = SND.on; if (!SND.on) { SND.ambient(null); ST.mutes++; } note(SND.on ? 'Sound on' : 'Sound off'); break;
       case 'e': toggleTool(DROPPER); break;
       case 'b': openBrew(); break;
       case 'r': if (isPortal()) rotatePortal(); else return; break;
@@ -2293,6 +2389,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     e.preventDefault();
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
     drawing = true; [curX, curY] = toCell(e); lastX = curX; lastY = curY; boltWait = 0; petX = petY = -99;
+    add(ST.brushUse, brush); strokeWalls = 0;
     $('#tip').classList.add('gone');
     paintLine(lastX, lastY, curX, curY);
   });
@@ -2316,7 +2413,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
       if (e.pointerType !== 'mouse') ghost.hidden = true;
       return;
     }
-    if (dropping) { dropping = false; pickFromLoupe(); if (e.pointerType !== 'mouse' || tool !== DROPPER) hideLoupe(); return; } if (e.pointerType !== 'mouse') ring.hidden = true; if (drawing) { drawing = false; writeSaveSoon(); } };
+    if (dropping) { dropping = false; pickFromLoupe(); if (e.pointerType !== 'mouse' || tool !== DROPPER) hideLoupe(); return; } if (e.pointerType !== 'mouse') ring.hidden = true; if (drawing) { drawing = false; writeSaveSoon(); if (strokeWalls > ST.longestWall) ST.longestWall = strokeWalls; } };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', (e) => { ring.hidden = true; dropping = false; hideLoupe(); endLine(false); stop(e); });
   canvas.addEventListener('pointerleave', () => { if (!portalDrag) ghost.hidden = true; if (!drawing) ring.hidden = true; if (!dropping) hideLoupe(); });
@@ -2326,7 +2423,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     const steps = Math.max(1, Math.ceil(d / Math.max(1, r * 0.6)));
     for (let s = 0; s <= steps; s++) dab(Math.round(x0 + (x1 - x0) * s / steps), Math.round(y0 + (y1 - y0) * s / steps));
   }
-  let petX = -99, petY = -99, straight = false;
+  let petX = -99, petY = -99, straight = false, strokeWalls = 0;
   function dab(cx, cy) {
     const w = world.w, h = world.h, r = BRUSHES[brush].r, t = world.t;
     if (tool === ERASE) world.removeCreatures(cx, cy, r);
@@ -2364,18 +2461,348 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     const kind = tool === ERASE ? -1 : KIND[tool];
     // Loose things are sprinkled so they pour; solids are painted solid.
     const fill = tool === ERASE ? 1 : baseOf(tool) === M.SEED ? 0.05 : straight || kind === K.solid ? 1 : kind === K.liquid ? 0.55 : kind === K.powder ? 0.45 : 0.35;
+    let painted = 0, erased = 0;
+    world.userPaint = true;
     for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
       if (dx * dx + dy * dy > r * r + r) continue;
       const x = cx + dx, y = cy + dy;
       if (x < 0 || y < 0 || x >= w || y >= h) continue;
       const i = y * w + x, b = t[i];
-      if (tool === ERASE) { t[i] = 0; continue; }
+      if (tool === ERASE) { if (b) erased++; t[i] = 0; continue; }
       if (rnd() > fill) continue;
       if (baseOf(tool) === M.FIRE && b && MATS[b].flam > 0) { world.ignite(i); continue; }
       const kb = KIND[b];
-      if (b === 0 || ((kb === K.gas || kb === K.cloud) && kind !== K.gas && kind !== K.cloud)) world.put(i, tool);
+      if (b === 0 || ((kb === K.gas || kb === K.cloud) && kind !== K.gas && kind !== K.cloud)) { world.put(i, tool); painted++; }
+    }
+    world.userPaint = false;
+    if (erased) ST.erased += erased;
+    if (painted) {
+      ST.painted += painted; sesBump('painted', painted); add(ST.paintBy, tool, painted);
+      if (kind === K.liquid) ST.liquid += painted;
+      if (tool === M.WALL) { ST.walls += painted; strokeWalls += painted; }
     }
   }
+
+  /* ---------------- All-time stats ----------------
+     Counted as you play and kept in this browser (and in backups). SES holds this session's counts,
+     for the session records in the Hall of Fame. */
+  const STATS_KEY = 'sandalchemy.stats.v1';
+  const ST_DEFAULT = () => ({ since: Date.now(), playMs: 0, sessions: 0, dayList: [], curStreak: 0, bestStreakDays: 0, longestSession: 0,
+    tod: { morning: 0, afternoon: 0, evening: 0, night: 0 }, device: { phone: 0, computer: 0 }, pausedMs: 0, simSteps: 0, speedMs: {}, mutes: 0,
+    painted: 0, erased: 0, lines: 0, brushUse: {}, undos: 0, clears: 0, walls: 0, longestWall: 0, dropper: 0, paintBy: {}, liquid: 0,
+    mostOnScreen: null, peakCells: 0, mostDiverse: 0, fell: 0, rx: 0, trans: 0, rxBy: {},
+    tempHi: 20, tempLo: 20, fires: 0, longestFire: 0, ash: 0, melt: 0, boil: 0, cooled: 0, obs: 0,
+    portalTrips: 0, portalMax: 0, loopMax: 0, bhMax: 0, whMax: 0, longestBH: 0, maxOrbit: 0, zeroGms: 0, grav: 0, zoomUses: 0, heatUses: 0, zeroGUses: 0,
+    booms: 0, bigBoom: 0, bigBlast: 0, chainMax: 0, boomsMinuteMax: 0, boomsBySize: {}, crater: 0, launched: 0,
+    sunrises: 0, lightning: 0, storms: 0, rain: 0, dayMs: 0, nightMs: 0, plants: 0, mostPlants: 0, seeds: 0,
+    popMax: 0, born: 0, species: {}, hatched: 0, lost: 0, deaths: {}, oldest: 0, steps: 0, flyDist: 0, swimDist: 0, frogs: 0, bugs: 0, jumps: 0, falls: 0, kos: 0, stickDist: 0,
+    brews: 0, brewNew: 0, brewKnown: 0, brewFizzle: 0, brewVoid: 0, streak: 0, bestStreak: 0, brew2: 0, brew3: 0, brew4: 0, randoms: 0, combos: {}, ingr: {},
+    hintsUsed: 0, revealsUsed: 0, firstFind: null, lastFind: 0, lastFindName: '', discTimes: [], fastest5: 0, best5min: 0,
+    invMade: 0, invDeleted: 0, invRepeat: 0, aiReq: 0, aiOk: 0, aiMs: 0, aiOnline: 0, aiDevice: 0, invDays: {}, bestDay: null,
+    worldsSaved: 0, worldsLoaded: 0, bigWorld: null, divWorld: null, cows: 0, choc: 0, oops: 0, swallowed: 0, spat: 0, maxFlying: 0,
+    rec: {} });
+  const ST = (() => { const d = ST_DEFAULT(); let saved = {}; try { saved = JSON.parse(localStorage.getItem(STATS_KEY) || '{}'); } catch (e) { /* fresh */ }
+    const out = Object.assign(d, saved); if (saved.days != null && !saved.sunrises) out.sunrises = saved.days; return out; })();
+  const SES = { start: Date.now(), reactions: 0, newFinds: 0, booms: 0, plants: 0, fires: 0, painted: 0, ai: 0 };
+  function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(ST)); } catch (e) { /* fine */ } }
+  setInterval(saveStats, 15000); addEventListener('pagehide', saveStats);
+  const add = (map, k, n) => { map[k] = (map[k] || 0) + (n == null ? 1 : n); };
+  // Session records (Hall of Fame): the best a single session has ever done.
+  function sesBump(k, n) { SES[k] += n; if (SES[k] > (ST.rec[k] || 0)) ST.rec[k] = SES[k]; }
+  const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  // A new session: count the day and the daily streak.
+  (function newSession() {
+    ST.sessions++;
+    const d = today();
+    if (!ST.dayList.includes(d)) {
+      const y = new Date(); y.setDate(y.getDate() - 1);
+      const yd = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0') + '-' + String(y.getDate()).padStart(2, '0');
+      ST.curStreak = ST.dayList.includes(yd) ? ST.curStreak + 1 : 1;
+      ST.dayList.push(d); if (ST.dayList.length > 1500) ST.dayList.shift();
+      if (ST.curStreak > ST.bestStreakDays) ST.bestStreakDays = ST.curStreak;
+    }
+  })();
+  const IS_PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+  // Every second: time played, when, on what, paused or not, at what speed.
+  setInterval(() => {
+    if (document.hidden || !world) return;
+    ST.playMs += 1000;
+    const hr = new Date().getHours(); add(ST.tod, hr < 5 ? 'night' : hr < 12 ? 'morning' : hr < 17 ? 'afternoon' : hr < 22 ? 'evening' : 'night', 1000);
+    add(ST.device, IS_PHONE ? 'phone' : 'computer', 1000);
+    const sess = Date.now() - SES.start; if (sess > ST.longestSession) ST.longestSession = sess;
+    if (paused) ST.pausedMs += 1000;
+    else {
+      add(ST.speedMs, String(speed), 1000);
+      if (world.zeroG) ST.zeroGms += 1000;
+      if (skyMode === 'cycle') { if (Math.sin(2 * Math.PI * (world.dayT || 0)) > 0) ST.dayMs += 1000; else ST.nightMs += 1000; }
+    }
+  }, 1000);
+  // Every second or so: look over the whole world (biggest amounts, variety, plants, fires, black holes, orbiting dust).
+  const hist = new Uint32Array(COUNT); let fireRun = 0, bhRun = 0;
+  function scanWorld() {
+    hist.fill(0); const t = world.t; let cells = 0;
+    for (let i = 0; i < t.length; i++) { const m = world.matAt(i); if (m) { hist[m]++; cells++; } }
+    let kinds = 0, best = 0, bestM = 0, plants = 0;
+    for (let m = 1; m < COUNT; m++) { const n = hist[m]; if (!n) continue; kinds++; if (n > best && m !== M.WALL) { best = n; bestM = m; } if (m === M.PLANT || m === M.VINE || m === M.MOSS || m === M.FLOWER || m === M.GLOWMOSS) plants += n; }
+    if (cells > ST.peakCells) ST.peakCells = cells;
+    if (kinds > ST.mostDiverse) ST.mostDiverse = kinds;
+    if (bestM && (!ST.mostOnScreen || best > ST.mostOnScreen.n)) ST.mostOnScreen = { m: bestM, n: best };
+    if (plants > ST.mostPlants) ST.mostPlants = plants;
+    fireRun = hist[M.FIRE] ? fireRun + 1 : 0; if (fireRun > ST.longestFire) ST.longestFire = fireRun;
+    bhRun = hist[M.BLACKHOLE] ? bhRun + 1 : 0; if (bhRun > ST.longestBH) ST.longestBH = bhRun;
+    if (world.holes && world.flying.length > ST.maxOrbit) ST.maxOrbit = world.flying.length;
+    if (world.creatures.length > ST.popMax) ST.popMax = world.creatures.length;
+    for (const c of world.creatures) if ((c.age || 0) > ST.oldest) ST.oldest = c.age;
+    if (world.tempHi > ST.tempHi) ST.tempHi = Math.round(world.tempHi); if (world.tempLo < ST.tempLo) ST.tempLo = Math.round(world.tempLo);
+  }
+  // Collect what the simulation counted since last time.
+  function drainTally() {
+    const T = world.tally; if (!T) return;
+    ['fell', 'rx', 'trans', 'ash', 'melt', 'boil', 'cooled', 'obs', 'choc', 'plants', 'seeds', 'storms', 'rain', 'fires', 'launched', 'grav', 'steps', 'flyDist', 'swimDist', 'frogs', 'bugs', 'cows', 'kos', 'falls', 'jumps', 'stickDist'].forEach((k) => { if (T[k]) ST[k] = (ST[k] || 0) + T[k]; });
+    ST.crater += T.blastCells;
+    ['portalMax', 'loopMax', 'bhMax', 'whMax', 'oldest', 'bigBlast'].forEach((k) => { if (T[k] > (ST[k] || 0)) ST[k] = T[k]; });
+    for (const k in T.deaths) add(ST.deaths, k, T.deaths[k]);
+    for (const k in T.species) add(ST.species, k, T.species[k]);
+    for (const k in T.rxBy) add(ST.rxBy, k, T.rxBy[k]);
+    if (T.rx) sesBump('reactions', T.rx); if (T.plants) sesBump('plants', T.plants); if (T.fires) sesBump('fires', T.fires);
+    world.newTally();
+  }
+  // Explosions per second and per minute (for the chain-reaction records).
+  const boomSec = new Array(60).fill(0); let boomNow = 0, boomStepN = 0, lastBoomAt = 0;
+  function statBooms(n, power) {
+    ST.booms += n; sesBump('booms', n); lastBoomAt = performance.now();
+    if (power > ST.bigBoom) ST.bigBoom = +power.toFixed(2);
+    add(ST.boomsBySize, power < 1.5 ? 'small' : power < 3 ? 'tnt' : power < 4.5 ? 'c4' : 'huge', n);
+    boomNow += n;
+  }
+  function tickBooms() { // once per 60 world steps (about a second)
+    if (boomNow > ST.chainMax) ST.chainMax = boomNow;
+    boomSec.shift(); boomSec.push(boomNow); boomNow = 0;
+    const minute = boomSec.reduce((a, b) => a + b, 0); if (minute > ST.boomsMinuteMax) ST.boomsMinuteMax = minute;
+  }
+  function statBrew(kind, ids) {
+    ST.brews++; ids = (ids || []).filter(Boolean);
+    if (kind === 'new') { ST.brewNew++; ST.streak++; if (ST.streak > ST.bestStreak) ST.bestStreak = ST.streak; }
+    else { ST.streak = 0; if (kind === 'void') ST.brewVoid++; else if (kind === 'fizzle') ST.brewFizzle++; else ST.brewKnown++; }
+    if (ids.length >= 4) ST.brew4++; else if (ids.length === 3) ST.brew3++; else ST.brew2++;
+    ids.forEach((m) => add(ST.ingr, m));
+    ST.combos[ids.slice().sort((a, b) => a - b).join('+')] = 1;
+    saveStats();
+  }
+  function statInvention() {
+    ST.invMade++; sesBump('ai', 1); const d = today(); add(ST.invDays, d);
+    if (!ST.bestDay || ST.invDays[d] > ST.bestDay.n) ST.bestDay = { d, n: ST.invDays[d] };
+    const keys = Object.keys(ST.invDays).sort(); while (keys.length > 60) delete ST.invDays[keys.shift()]; // only the last two months
+    saveStats();
+  }
+  function statFind(m) {
+    const now = Date.now(); ST.lastFind = now; ST.lastFindName = MATS[m] ? MATS[m].name : '';
+    if (!ST.firstFind) ST.firstFind = { name: ST.lastFindName, at: now };
+    ST.discTimes.push(now); if (ST.discTimes.length > 40) ST.discTimes.shift();
+    const L = ST.discTimes.length;
+    if (L >= 5) { const span = now - ST.discTimes[L - 5]; if (!ST.fastest5 || span < ST.fastest5) ST.fastest5 = span; }
+    const in5 = ST.discTimes.filter((t) => now - t <= 300000).length; if (in5 > ST.best5min) ST.best5min = in5;
+    sesBump('newFinds', 1);
+  }
+  const fmt = (n) => Math.round(n || 0).toLocaleString();
+  const fmtTime = (ms) => { const s = Math.floor((ms || 0) / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : m ? `${m}m` : `${s}s`; };
+  const fmtDate = (d) => { if (!d) return '—'; const x = typeof d === 'string' ? new Date(d + 'T12:00') : new Date(d); return x.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); };
+  const boomName = (p) => !p ? '—' : p < 1.5 ? 'Gunpowder-sized' : p < 3 ? 'TNT-sized' : p < 4.5 ? 'C4-sized' : 'Huge chain reaction';
+  const nm = (m) => (MATS[m] && MATS[m].name) || '—';
+  const topOf = (map, ok) => Object.entries(map || {}).filter(([k]) => !ok || ok(k)).sort((a, b) => b[1] - a[1]);
+  const DEATH = { burn: 'burned', drown: 'drowned', void: 'swallowed by a black hole', freeze: 'frozen', crush: 'crushed', eaten: 'eaten', boom: 'blown up', dry: 'dried out', fall: 'fell' };
+  // How many brewing steps each discovered thing is from the starting elements (for the rarest discovery).
+  function recipeDepths() {
+    const depth = new Map();
+    ORDER.forEach((m) => { if (MATS[m].start) depth.set(m, 0); });
+    const known = () => [...depth.keys()];
+    for (let round = 0; round < 25; round++) {
+      let grew = false; const ks = known();
+      for (const a of ks) for (const b of ks) {
+        const out = MAGIC[a * COUNT + b]; if (!out || depth.has(out) || !world.discovered[out]) continue;
+        depth.set(out, Math.max(depth.get(a), depth.get(b)) + 1); grew = true;
+      }
+      if (!grew) break;
+    }
+    return depth;
+  }
+  function openStats() {
+    const body = $('#stats-body'); body.innerHTML = '';
+    const tile = (g, big, label, cls) => { const d = document.createElement('div'); d.className = 'stat' + (cls ? ' ' + cls : ''); const b = document.createElement('b'), sp = document.createElement('span'); b.textContent = big; sp.textContent = label; d.append(b, sp); g.append(d); return d; };
+    const grid = (parent) => { const g = document.createElement('div'); g.className = 'stat-grid'; parent.append(g); return g; };
+    const section = (title, open) => { const d = document.createElement('details'); d.className = 'stat-sec'; if (open) d.open = true; const s = document.createElement('summary'); s.textContent = title; d.append(s); body.append(d); return grid(d); };
+    // Numbers worked out now.
+    const builtIn = GROUPS.filter((g) => g !== INV_GROUP).map((grp) => ({ grp, items: grp.items.filter((m) => !MATS[m].hidden && !MATS[m].reserved) }));
+    let found = 0, total = 0; builtIn.forEach(({ items }) => { total += items.length; found += items.filter((m) => world.discovered[m]).length; });
+    const live = INV_GROUP.items.filter((m) => !MATS[m].hidden);
+    const topPaint = topOf(ST.paintBy, (k) => MATS[k] && !MATS[k].hidden);
+    const deaths = topOf(ST.deaths), species = topOf(ST.species, (k) => MATS[k]);
+    const sesFind = ST.rec;
+    // ⭐ Highlights
+    const hi = section('⭐ Highlights', true);
+    tile(hi, fmtTime(ST.playMs), 'total playtime');
+    tile(hi, `${found + live.length}`, `total discoveries (${found} built-in + ${live.length} inventions)`);
+    tile(hi, fmt(ST.painted), 'cells painted');
+    tile(hi, topPaint.length ? nm(+topPaint[0][0]) : '—', 'most-used material');
+    tile(hi, `${fmt(ST.tempHi)}°`, 'hottest temperature');
+    tile(hi, ST.portalMax ? ST.portalMax.toFixed(1) + ' cells/frame' : '—', 'fastest portal speed');
+    tile(hi, fmt(ST.chainMax), 'biggest chain reaction (explosions in one second)');
+    tile(hi, fmt(ST.sunrises), 'sunrises watched');
+    tile(hi, fmt(ST.plants), 'plants grown');
+    tile(hi, fmt(ST.popMax), 'biggest creature population');
+    tile(hi, fmt(ST.best5min), 'most discoveries within 5 minutes');
+    tile(hi, fmt(live.length), 'AI inventions in your book');
+    tile(hi, ST.bigWorld ? fmt(ST.bigWorld.n) + ' cells' : '—', ST.bigWorld ? 'biggest saved world (' + ST.bigWorld.name + ')' : 'biggest saved world');
+    tile(hi, fmt(ST.cows), 'cows swallowed by black holes 🐄');
+    tile(hi, ST.bestDay ? String(ST.bestDay.n) : '—', ST.bestDay ? `most inventions in one day (${fmtDate(ST.bestDay.d)})` : 'most inventions in one day', 'gold');
+    // 1. General
+    const g1 = section('General & playtime');
+    tile(g1, fmtTime(ST.playMs), 'total playtime'); tile(g1, fmt(ST.sessions), 'sessions played'); tile(g1, fmt(ST.dayList.length), 'days played');
+    tile(g1, fmt(ST.curStreak) + (ST.curStreak === 1 ? ' day' : ' days'), 'current daily streak'); tile(g1, fmt(ST.bestStreakDays) + ' days', 'longest daily streak');
+    tile(g1, fmtTime(ST.longestSession), 'longest session');
+    const tod = topOf(ST.tod)[0]; tile(g1, tod && tod[1] ? tod[0][0].toUpperCase() + tod[0].slice(1) : '—', 'favorite time to play');
+    tile(g1, `${fmtTime(ST.device.computer)} / ${fmtTime(ST.device.phone)}`, 'computer / phone playtime');
+    tile(g1, fmtTime(ST.pausedMs), 'time paused'); tile(g1, fmtTime(ST.simSteps * 1000 / 60), 'simulated time');
+    const sp = topOf(ST.speedMs)[0]; tile(g1, sp ? (sp[0] === '0.25' ? '¼' : sp[0] === '0.5' ? '½' : sp[0]) + '×' : '1×', 'most-used speed');
+    tile(g1, fmt(ST.mutes), 'times sound was muted');
+    // 2. Drawing
+    const g2 = section('Drawing & building');
+    tile(g2, fmt(ST.painted), 'cells painted'); tile(g2, fmt(ST.erased), 'cells erased'); tile(g2, fmt(ST.lines), 'straight lines drawn');
+    const bu = topOf(ST.brushUse)[0]; tile(g2, bu ? BRUSHES[+bu[0]].label : '—', 'favorite brush size');
+    tile(g2, BRUSHES.map((b, k) => b.label + ' ' + fmt(ST.brushUse[k])).join(' · '), 'strokes per brush size');
+    tile(g2, fmt(ST.undos), 'undos'); tile(g2, fmt(ST.clears), 'worlds cleared'); tile(g2, fmt(ST.walls), 'wall cells placed');
+    tile(g2, fmt(ST.longestWall), 'longest wall (cells in one stroke)'); tile(g2, fmt(ST.dropper), 'dropper uses'); tile(g2, fmt(ST.rec.painted), 'most cells painted in one session');
+    // 3. Elements
+    const g3 = section('Elements & materials');
+    tile(g3, topPaint.slice(0, 5).map(([m, n]) => nm(+m) + ' ' + fmt(n)).join(' · ') || '—', 'top 5 most-used materials', 'wide');
+    const least = builtIn.flatMap((x) => x.items).filter((m) => world.discovered[m] && !MATS[m].creature).sort((a, b) => (ST.paintBy[a] || 0) - (ST.paintBy[b] || 0))[0];
+    tile(g3, least ? nm(least) : '—', least ? `least-used element (painted ${fmt(ST.paintBy[least])}×)` : 'least-used element');
+    tile(g3, ST.mostOnScreen ? fmt(ST.mostOnScreen.n) + ' ' + nm(ST.mostOnScreen.m) : '—', 'most of one material on screen');
+    tile(g3, fmt(ST.fell), 'grains fallen (cells)'); tile(g3, fmt(ST.liquid), 'liquid cells poured');
+    let now = 0; for (let i = 0; i < world.t.length; i++) if (world.t[i]) now++;
+    tile(g3, fmt(now), 'cells filled right now'); tile(g3, fmt(ST.peakCells), 'most cells filled at once');
+    tile(g3, fmt(ST.rx), 'reactions'); tile(g3, fmt(ST.trans), 'cells transformed');
+    const rxTop = topOf(ST.rxBy, (k) => MATS[k])[0]; tile(g3, rxTop ? nm(+rxTop[0]) : '—', 'most reactive element');
+    tile(g3, fmt(ST.mostDiverse), 'most different materials in one world');
+    // 4. Fire & heat
+    const g4 = section('Fire, heat & temperature');
+    tile(g4, `${fmt(ST.tempHi)}°`, 'hottest temperature'); tile(g4, `${fmt(ST.tempLo)}°`, 'coldest temperature');
+    tile(g4, fmt(ST.fires), 'fires started'); tile(g4, fmtTime(ST.longestFire * 1000), 'longest-burning fire');
+    tile(g4, fmt(ST.ash), 'cells burned to ash'); tile(g4, fmt(ST.melt), 'ice melted'); tile(g4, fmt(ST.boil), 'water boiled to steam');
+    tile(g4, fmt(ST.cooled), 'lava cooled into rock'); tile(g4, fmt(ST.obs), 'obsidian created');
+    // 5. Space
+    const g5 = section('Space, portals & gravity');
+    tile(g5, ST.portalMax ? ST.portalMax.toFixed(1) + ' cells/frame' : '—', 'fastest portal speed'); tile(g5, fmt(ST.portalTrips), 'portal trips');
+    tile(g5, fmt(ST.loopMax), 'longest portal loop (jumps by one grain)');
+    tile(g5, fmt(ST.bhMax) + ' cells', 'biggest black hole'); tile(g5, fmt(ST.whMax) + ' cells', 'biggest white hole');
+    tile(g5, fmtTime(ST.longestBH * 1000), 'longest-living black hole'); tile(g5, fmt(ST.maxOrbit), 'most pieces in orbit at once');
+    tile(g5, fmtTime(ST.zeroGms), 'time in zero gravity'); tile(g5, fmt(ST.grav), 'gravity bombs triggered');
+    tile(g5, fmt(ST.zoomUses), 'zoom uses'); tile(g5, fmt(ST.heatUses), 'heat view uses'); tile(g5, fmt(ST.zeroGUses), 'zero-gravity uses');
+    // 6. Explosions
+    const g6 = section('Explosions & destruction');
+    tile(g6, fmt(ST.chainMax), 'biggest chain reaction (in one second)'); tile(g6, fmt(ST.booms), 'explosions');
+    tile(g6, fmt(ST.bigBlast) + ' cells', 'biggest explosion (cells blown apart)'); tile(g6, boomName(ST.bigBoom), 'most powerful blast');
+    tile(g6, fmt(ST.boomsMinuteMax), 'most explosions in one minute');
+    const bs = ST.boomsBySize; tile(g6, `${fmt(bs.small)} · ${fmt(bs.tnt)} · ${fmt(bs.c4)} · ${fmt(bs.huge)}`, 'explosions by size: gunpowder · TNT · C4 · huge');
+    tile(g6, fmt(ST.crater), 'cells blasted (craters dug)'); tile(g6, fmt(ST.launched), 'creatures caught in blasts'); tile(g6, fmt(ST.rec.booms), 'most explosions in one session');
+    // 7. Weather
+    const g7 = section('Weather & sky');
+    tile(g7, fmt(ST.sunrises), 'sunrises watched'); tile(g7, fmt(ST.lightning), 'lightning strikes'); tile(g7, fmt(ST.storms), 'storms formed');
+    tile(g7, fmt(ST.rain), 'raindrops and snowflakes'); tile(g7, fmtTime(ST.dayMs), 'daytime played'); tile(g7, fmtTime(ST.nightMs), 'nighttime played');
+    // 8. Nature
+    const g8 = section('Nature & plant life');
+    tile(g8, fmt(ST.plants), 'plants grown'); tile(g8, fmt(ST.mostPlants), 'most plants in one world'); tile(g8, fmt(ST.seeds), 'seeds sprouted'); tile(g8, fmt(ST.rec.plants), 'most plant growth in one session');
+    // 9. Creatures
+    const g9 = section('Creatures & life');
+    tile(g9, fmt(ST.popMax), 'biggest population'); tile(g9, fmt(ST.born), 'creatures spawned or born');
+    const spFound = ORDER.filter((m) => MATS[m].creature && world.discovered[m]).length + live.filter((m) => MATS[m].creature).length;
+    tile(g9, fmt(spFound), 'species discovered');
+    tile(g9, species.slice(0, 5).map(([k, n]) => nm(+k) + ' ' + fmt(n)).join(' · ') || '—', 'population by species (top 5)', 'wide');
+    tile(g9, species.length ? nm(+species[0][0]) : '—', 'most common species');
+    tile(g9, fmt(ST.hatched), 'eggs hatched'); tile(g9, fmt(ST.lost), 'creatures lost');
+    tile(g9, deaths.length ? DEATH[deaths[0][0]] || deaths[0][0] : '—', 'most common cause of death');
+    tile(g9, fmtTime(ST.oldest * 1000 / 60), 'longest-living creature');
+    tile(g9, fmt(ST.steps), 'creature steps'); tile(g9, fmt(ST.flyDist), 'flying distance (cells)'); tile(g9, fmt(ST.swimDist), 'swimming distance (cells)');
+    tile(g9, fmt(ST.frogs), 'frogs raised'); tile(g9, fmt(ST.bugs), 'bugs eaten');
+    tile(g9, `${fmt(ST.jumps)} · ${fmt(ST.falls)} · ${fmt(ST.kos)}`, 'Stickman jumps · falls · knockouts'); tile(g9, fmt(ST.stickDist), 'Stickman walking distance (cells)');
+    // 10. Alchemy
+    const g10 = section('Alchemy & discoveries');
+    tile(g10, `${found + live.length}`, 'total discoveries'); tile(g10, `${found} / ${total}`, 'built-in discoveries'); tile(g10, Math.round(100 * found / Math.max(1, total)) + '%', 'discovery completion');
+    const bars = document.createElement('div'); bars.className = 'stat wide';
+    builtIn.forEach(({ grp, items }) => {
+      if (!items.length) return; const f = items.filter((m) => world.discovered[m]).length;
+      const row = document.createElement('div'); row.className = 'bar-row'; row.innerHTML = '<span></span><div class="bar"><i></i></div><em></em>';
+      row.children[0].textContent = grp.label; row.querySelector('i').style.width = Math.round(100 * f / items.length) + '%'; row.children[2].textContent = f + ' / ' + items.length; bars.append(row);
+    });
+    g10.append(bars);
+    tile(g10, fmt(ST.brews), 'brews'); tile(g10, fmt(ST.brewNew), 'successful brews (something new)'); tile(g10, fmt(ST.brewKnown), 'repeat brews'); tile(g10, fmt(ST.brewFizzle + ST.brewVoid), 'failed brews');
+    tile(g10, fmt(Object.keys(ST.combos).length), 'different combinations tried');
+    const fav = topOf(ST.ingr, (k) => MATS[k] && !MATS[k].hidden)[0]; tile(g10, fav ? nm(+fav[0]) : '—', fav ? `most-used ingredient (${fmt(fav[1])}×)` : 'most-used ingredient');
+    tile(g10, ST.firstFind ? ST.firstFind.name : '—', ST.firstFind ? 'first discovery since stats began, ' + fmtDate(ST.firstFind.at) : 'first discovery');
+    tile(g10, ST.lastFindName || '—', ST.lastFind ? 'latest discovery, ' + fmtDate(ST.lastFind) : 'latest discovery');
+    tile(g10, fmt(ST.bestStreak), 'longest streak of new finds'); tile(g10, fmt(ST.streak), 'current streak');
+    tile(g10, fmt(ST.best5min), 'most new discoveries within 5 minutes');
+    const dep = recipeDepths(); let rare = 0, rareD = 0; dep.forEach((d, m) => { if (d > rareD) { rareD = d; rare = m; } });
+    tile(g10, rare ? nm(rare) : '—', rare ? `rarest discovery (${rareD} brews from the start)` : 'rarest discovery');
+    const complex = inventions.filter((r) => MATS[r.id] && !MATS[r.id].hidden).sort((a, b) => ((b.parts || []).length || 2) - ((a.parts || []).length || 2))[0];
+    tile(g10, complex ? MATS[complex.id].name : '—', complex ? `most complex recipe (${(complex.parts || []).length || 2} ingredients)` : 'most complex recipe');
+    tile(g10, `${fmt(ST.brew2)} · ${fmt(ST.brew3)} · ${fmt(ST.brew4)}`, '2 · 3 · 4-ingredient brews'); tile(g10, fmt(ST.randoms), 'random brews');
+    tile(g10, fmt(ST.hintsUsed), 'hints used'); tile(g10, fmt(ST.revealsUsed), 'reveals used'); tile(g10, fmt(ST.rec.newFinds), 'most discoveries in one session');
+    tile(g10, ST.fastest5 ? fmtTime(ST.fastest5) : '—', 'fastest five discoveries');
+    // 11. AI
+    const g11 = section('Cauldron spirit & AI inventions');
+    tile(g11, fmt(live.length), 'AI inventions in your book'); tile(g11, fmt(Math.max(ST.invMade, live.length)), 'lifetime AI creations');
+    tile(g11, `${invCount()} / ${invMax()}`, 'invention capacity'); tile(g11, fmt(ST.invDeleted), 'inventions deleted'); tile(g11, fmt(ST.invRepeat), 'times a brew gave back an invention you had');
+    const favInv = topOf(ST.paintBy, (k) => MATS[k] && MATS[k].invented && !MATS[k].hidden)[0]; tile(g11, favInv ? nm(+favInv[0]) : '—', 'favorite invention (most painted)');
+    tile(g11, invShelves(live).map((sh) => sh.label + ' ' + sh.items.length).join(' · ') || '—', 'inventions by shelf', 'wide');
+    tile(g11, `${fmt(ST.aiOnline)} · ${fmt(ST.aiDevice)}`, 'online · on-device inventions');
+    tile(g11, fmt(ST.aiReq), 'requests to the Cauldron spirit'); tile(g11, ST.aiReq ? Math.round(100 * ST.aiOk / ST.aiReq) + '%' : '—', 'spirit success rate');
+    tile(g11, ST.aiOk ? (ST.aiMs / ST.aiOk / 1000).toFixed(1) + 's' : '—', 'average thinking time'); tile(g11, fmt(ST.rec.ai), 'most AI inventions in one session');
+    tile(g11, fmt(favs.length), 'favorites starred');
+    // 12. Saved worlds (the list lives in another store, so it fills in a moment later)
+    const g12 = section('Saved worlds');
+    tile(g12, ST.bigWorld ? fmt(ST.bigWorld.n) + ' cells' : '—', ST.bigWorld ? 'biggest saved world: ' + ST.bigWorld.name : 'biggest saved world');
+    tile(g12, fmt(ST.worldsSaved), 'worlds saved'); tile(g12, fmt(ST.worldsLoaded), 'worlds loaded');
+    const mostLoaded = tile(g12, '…', 'most-loaded world'), oldest = tile(g12, '…', 'oldest saved world');
+    tile(g12, ST.divWorld ? ST.divWorld.n + ' materials' : '—', ST.divWorld ? 'most varied saved world: ' + ST.divWorld.name : 'most varied saved world');
+    WDB.all().then((list) => {
+      list = list || []; const ml = list.slice().sort((a, b) => (b.loads || 0) - (a.loads || 0))[0], ol = list.slice().sort((a, b) => a.at - b.at)[0];
+      mostLoaded.querySelector('b').textContent = ml && ml.loads ? `${ml.name} (${ml.loads}×)` : '—';
+      oldest.querySelector('b').textContent = ol ? ol.name : '—'; if (ol) oldest.querySelector('span').textContent = 'oldest saved world, ' + fmtDate(ol.at);
+    }).catch(() => {});
+    // 13. Fun & Hall of Fame
+    const g13 = section('Fun & silly');
+    tile(g13, fmt(ST.cows), 'cows swallowed by black holes'); tile(g13, fmt(ST.choc), 'things turned into chocolate');
+    tile(g13, fmt(ST.brewVoid), 'brews swallowed by the Void'); tile(g13, fmt(ST.oops), 'oops moments (undo right after an explosion)');
+    const g14 = section('🏆 Hall of Fame (best single session)', true);
+    const R = ST.rec;
+    [['Mad Scientist', fmt(R.reactions), 'reactions'], ['Master Brewer', fmt(R.newFinds), 'new discoveries'], ['Chaos Creator', fmt(R.booms), 'explosions'],
+      ['Green Thumb', fmt(R.plants), 'plants grown'], ['Firestarter', fmt(R.fires), 'fires started'], ['World Builder', fmt(R.painted), 'cells painted'],
+      ['Creature Keeper', fmt(ST.popMax), 'creatures at once'], ['Element Collector', fmt(ST.mostDiverse), 'materials in one world'],
+      ["Spirit's Favorite", fmt(R.ai), 'AI inventions'], ['Speed Alchemist', ST.fastest5 ? fmtTime(ST.fastest5) : '—', 'for 5 discoveries']].forEach(([t, v, l]) => tile(g14, v, t + ' · ' + l, 'gold'));
+    $('#stats-since').textContent = 'since ' + fmtDate(ST.since);
+    $('#stats').hidden = false;
+  }
+  $('#open-stats').addEventListener('click', () => { $('#settings').hidden = true; openStats(); });
+  $('#to-stats').addEventListener('click', () => { $('#book').hidden = true; openStats(); });
+  $('#stats-close').addEventListener('click', () => { $('#stats').hidden = true; });
+
+  /* ---------------- Performance readout ---------------- */
+  let perfOn = false, perfStep = 0, perfSteps = 0, perfFrames = 0, perfT0 = performance.now();
+  try { perfOn = localStorage.getItem('sandalchemy.perf') === '1'; } catch (e) { /* fine */ }
+  function setPerf(v) { perfOn = !!v; $('#perf').hidden = !perfOn; $('#wp-perf').checked = perfOn; try { localStorage.setItem('sandalchemy.perf', perfOn ? '1' : '0'); } catch (e) { /* fine */ } }
+  $('#wp-perf').addEventListener('change', (e) => setPerf(e.target.checked));
+  function tickPerf() {
+    perfFrames++;
+    const now = performance.now(), dt = now - perfT0; if (dt < 500) return;
+    if (perfOn) {
+      const fps = perfFrames * 1000 / dt, ms = perfSteps ? perfStep / perfSteps : 0;
+      const cls = fps >= 50 ? 'ok' : fps >= 30 ? 'meh' : 'bad';
+      $('#perf').innerHTML = `<span class="${cls}">${Math.round(fps)} fps</span> \u00b7 ${ms.toFixed(1)} ms/step \u00b7 ${fmt(world.flying.length)} flying \u00b7 ${world.creatures.length} creatures`;
+    }
+    perfFrames = 0; perfStep = 0; perfSteps = 0; perfT0 = now;
+  }
+  setPerf(perfOn);
 
   /* ---------------- Day and night ----------------
      Sky modes: classic (the original look), day, night, or a cycle that follows the world's clock
@@ -2453,6 +2880,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     hctx.putImageData(hImg, 0, 0);
   }
   function setThermal(v) {
+    if (v && !thermal) ST.heatUses++;
     thermal = !!v; heatCv.hidden = !thermal; $('#wp-thermal').checked = thermal; $('#world-btn-heat').hidden = !thermal;
     if (thermal) drawHeat();
   }
@@ -2683,10 +3111,14 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (s.bolt) SND.bolt(s.boltX);
     if (s.portal) SND.portal();
     if (s.gulp) SND.gulp();
-    s.boom = 0; s.booms = 0; s.bolt = 0; s.portal = 0; s.gulp = 0;
+    if (s.booms) statBooms(s.booms, s.boom);
+    ST.swallowed += s.gulp; ST.spat += s.spat || 0; ST.born += s.born || 0; ST.lost += s.lost || 0; ST.hatched += s.hatched || 0;
+    ST.portalTrips += s.portal; ST.lightning += s.bolt;
+    if (world.flying.length > ST.maxFlying) ST.maxFlying = world.flying.length;
+    s.boom = 0; s.booms = 0; s.bolt = 0; s.portal = 0; s.gulp = 0; s.spat = 0; s.born = 0; s.lost = 0; s.hatched = 0;
   }
   $('#snd-on').checked = SND.on; $('#snd-vol').value = Math.round(SND.vol * 100);
-  $('#snd-on').addEventListener('change', (e) => { SND.set(e.target.checked, SND.vol); if (!e.target.checked) SND.ambient(null); });
+  $('#snd-on').addEventListener('change', (e) => { SND.set(e.target.checked, SND.vol); if (!e.target.checked) { SND.ambient(null); ST.mutes++; } });
   $('#amb-on').checked = SND.amb;
   $('#amb-on').addEventListener('change', (e) => SND.setAmb(e.target.checked));
   $('#snd-vol').addEventListener('input', (e) => SND.set(SND.on, e.target.value / 100));
@@ -2708,7 +3140,13 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     if (!paused) {
       // Slow motion steps the world every few frames; fast forward steps it several times a frame.
       stepAcc += speed;
-      for (let n = 0; stepAcc >= 1 && n < 4; n++, stepAcc--) { world.step(); playWorldSounds(); if (skyMode === 'cycle') world.dayT = ((world.dayT || 0) + 1 / DAYLEN) % 1; }
+      for (let n = 0; stepAcc >= 1 && n < 4; n++, stepAcc--) {
+        const t0 = performance.now(); world.step(); perfStep += performance.now() - t0; perfSteps++;
+        playWorldSounds(); ST.simSteps++;
+        if ((ST.simSteps % 60) === 0) tickBooms();
+        if ((ST.simSteps % 30) === 0) drainTally();
+        if (skyMode === 'cycle') { const was = world.dayT || 0; world.dayT = (was + 1 / DAYLEN) % 1; if (world.dayT < was) ST.sunrises++; }
+      }
       if ((++frameTick & 7) === 0) sampleAmbient();
       quietNow = false;
     } else if (!quietNow) { quietNow = true; SND.ambient(null); } // paused: the world goes quiet
@@ -2717,6 +3155,8 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
     drawGlow();
     if (thermal && (frameTick & 3) === 0) drawHeat();
     if (skyMode !== 'classic' && (frameTick % 6) === 0) updateSky();
+    if (!paused && (frameTick % 60) === 30) scanWorld();
+    tickPerf();
     if (loupeAt) drawLoupe();
     requestAnimationFrame(frame);
   }
@@ -2788,7 +3228,7 @@ movement from: ${MOVES.join(', ')}. abilities from: ${ABILITIES.join(', ')}. eff
   });
 
   // The version lives here (not in index.html) so it updates with the game code.
-  const GAME_VERSION = 'Oct 13, update 50';
+  const GAME_VERSION = 'Oct 13, update 54';
   if ($('#game-ver')) $('#game-ver').textContent = 'Game version: ' + GAME_VERSION;
   window.SandGame = { get world() { return world; }, pick, M, writeSave, sound: SND };
 })();

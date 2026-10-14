@@ -101,6 +101,8 @@
     [M.HEATCRYSTAL, 250], [M.STEAM, 105], [M.COLDFIRE, -60], [M.ICE, -10], [M.SNOW, -8], [M.FROSTCRYSTAL, -40],
     [M.DRYICE, -78], [M.LN2, -196]].forEach(([m, v]) => { TEMP[m] = v; });
   const ROOM = 20, TB = 4; // room temperature, and heat is tracked in blocks of 4x4 cells
+  const PLANTISH = new Uint8Array(COUNT); [M.PLANT, M.VINE, M.MOSS, M.FLOWER, M.MUSHROOM, M.CACTUS, M.GLOWMOSS, M.FIREFLOWER, M.FROSTFERN, M.CORAL].forEach((m) => { if (m) PLANTISH[m] = 1; });
+  const FLYMOVE = { fly: 1, flutter: 1 }, SWIMMOVE = { swim: 1, paddle: 1, drift: 1, amphibian: 1 };
   const COLD = new Uint8Array(COUNT); [M.ICE, M.SNOW, M.FROSTCRYSTAL, M.COLDFIRE, M.DRYICE, M.LN2].forEach((m) => { COLD[m] = 1; });
   function buildProps(mt) {
     const m = mt.id;
@@ -166,11 +168,13 @@
       this.airOn = false;       // the air simulation sleeps until something stirs it
       this.blastsNow = 0;       // explosions this frame: a chain reaction throws things harder
       this.zeroG = false;       // zero gravity: grains and liquids float, only holes pull
+      this.userPaint = false;   // set while you paint, so your own strokes don't count as 'grown' or 'transformed'
+      this.newTally();
       this.dayT = 0.1;          // time of day (0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight)
       this.tw = Math.ceil(w / TB); this.th = Math.ceil(h / TB);
       this.temp = new Float32Array(this.tw * this.th).fill(ROOM); // temperature of each 4x4 block
       this.tempNext = new Float32Array(this.tw * this.th); this.tSum = new Float32Array(this.tw * this.th); this.tN = new Uint16Array(this.tw * this.th); this.tFull = new Uint16Array(this.tw * this.th);
-      this.sfx = { boom: 0, boomX: 0.5, booms: 0, bolt: 0, boltX: 0.5, portal: 0, gulp: 0 }; // what happened this frame, for sound effects
+      this.sfx = { boom: 0, boomX: 0.5, booms: 0, bolt: 0, boltX: 0.5, portal: 0, gulp: 0, spat: 0, born: 0, lost: 0, hatched: 0 }; // what happened since the game last looked (sounds and stats)
       this.creatures = [];
       this.magnets = []; this.hasSticky = false; this.hasBouncy = false;
       for (let i = 0; i < n; i++) this.shade[i] = ri(256);
@@ -192,6 +196,14 @@
       if (this.hasTint) this.tint[i] = 0;
       const was = this.t[i];
       this.heat[i] = (was === M.LAVA || was === M.MOLTENGOLD) && COOLS[m] ? 255 : 0;
+      if (was !== m && !this.userPaint) {
+        const T = this.tally; if (was) T.trans++;
+        if (m === M.ASH) T.ash++; else if (m === M.OBSIDIAN) T.obs++; else if (m === M.CHOCOLATE || m === M.MELTCHOC) T.choc++; else if (m === M.STORM) T.storms++;
+        else if (m === M.WATER) { if (was === M.ICE || was === M.SNOW) T.melt++; } else if (m === M.STEAM) { if (was === M.WATER || was === M.SEAWATER) T.boil++; }
+        if ((was === M.LAVA || was === M.MOLTENGOLD) && COOLS[m]) T.cooled++;
+        if (PLANTISH[m]) T.plants++;
+        if (was === M.SEED) T.seeds++;
+      }
       this.t[i] = m;
       this.life[i] = life != null ? life : this.defaultLife(m);
       this.fuel[i] = 0;
@@ -225,6 +237,12 @@
           return 0;
       }
     }
+    // Counters for the stats page. The game reads them now and then and starts a fresh tally.
+    newTally() {
+      this.tally = { fell: 0, rx: 0, trans: 0, ash: 0, melt: 0, boil: 0, cooled: 0, obs: 0, choc: 0, plants: 0, seeds: 0, storms: 0, rain: 0, fires: 0,
+        blastCells: 0, bigBlast: 0, launched: 0, grav: 0, portalMax: 0, loopMax: 0, bhMax: 0, whMax: 0, steps: 0, flyDist: 0, swimDist: 0, frogs: 0, bugs: 0, cows: 0,
+        kos: 0, falls: 0, jumps: 0, stickDist: 0, oldest: 0, deaths: {}, species: {}, rxBy: {} };
+    }
     swap(i, j) {
       const t = this.t, l = this.life, s = this.shade, f = this.fuel;
       let v = t[i]; t[i] = t[j]; t[j] = v;
@@ -255,6 +273,7 @@
 
     ignite(j) {
       const b = this.t[j];
+      { const t = this.t, w = this.w; if (t[j - 1] !== M.FIRE && t[j + 1] !== M.FIRE && t[j - w] !== M.FIRE && t[j + w] !== M.FIRE) this.tally.fires++; }
       if (b === M.GUNPOWDER) { this.blast(j % this.w, (j / this.w) | 0, 1); return; }
       if (b === M.FIREWORK) { this.put(j, M.ROCKET); return; }
       if (b === M.FROSTBOMB) { this.frostBlast(j % this.w, (j / this.w) | 0); return; }
@@ -284,12 +303,15 @@
       this.hurtCreatures(cx, cy, Math.round(8 * (0.7 + 0.3 * power)), 'burn');
       const r = Math.round((5 + ri(3)) * (0.75 + 0.25 * power)), w = this.w, h = this.h; // nitro digs a bigger crater
       this.t[cy * w + cx] = 0;
+      { let n = 0; for (const c of this.creatures) if (!c.dead && (c.x - cx) ** 2 + (c.y - cy) ** 2 < (r * 1.6) ** 2) n++; this.tally.launched += n; }
+      let crater = 0;
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         if (dx * dx + dy * dy > r * r) continue;
         const x = cx + dx, y = cy + dy;
         if (x < 0 || y < 0 || x >= w || y >= h) continue;
         const j = y * w + x, b = this.t[j];
         if (b === M.METAL || b === M.OBSIDIAN || b === M.DIAMOND || b === M.BRICK || b === M.STEEL || PROOF[b] || b === M.VACUUM) continue;
+        if (b) { crater++; this.tally.blastCells++; }
         if (b === M.GUNPOWDER) { this.t[j] = 0; this.pendingBlasts.push(x, y, 1); continue; }
         if (b === M.GEODE) { this.put(j, rnd() < 0.75 ? M.CRYSTAL : M.STARDUST); continue; } // cracks open: crystals inside
         if (b === M.TNT || b === M.HYDROGEN) { this.t[j] = 0; this.pendingBlasts.push(x, y, BOOM[b]); continue; } // a blast sets TNT off straight away
@@ -302,6 +324,7 @@
         if (b === M.WATER) { if (rnd() < 0.5) this.put(j, M.STEAM); continue; }
         if (rnd() < 0.45) this.put(j, M.FIRE, 6 + ri(14)); else if (b !== M.CRYSTAL) this.t[j] = 0;
       }
+      if (crater > (this.tally.bigBlast || 0)) this.tally.bigBlast = crater;
       this.shove(cx, cy, r, power);
     }
     /* ---------------- Air ----------------
@@ -684,7 +707,8 @@
               if (q >= 0) {
                 const sp = Math.min(9, Math.hypot(p.vx, p.vy) + 0.25), v0 = Math.hypot(p.vx, p.vy) || 1;
                 p.x = q % w; p.y = (q / w) | 0; p.vx = p.vx / v0 * sp; p.vy = p.vy / v0 * sp; p.pz = 1; // same direction, a bit faster
-                this.sfx.portal++;
+                this.sfx.portal++; p.pj = (p.pj || 0) + 1;
+                if (sp > this.tally.portalMax) this.tally.portalMax = sp; if (p.pj > this.tally.loopMax) this.tally.loopMax = p.pj;
                 break;
               }
             }
@@ -895,6 +919,7 @@
             if (!MATS[m] || MATS[m].reserved) continue;
             const b = a + (rnd() - 0.5) * 1.2, v = 0.9 + rnd() * 0.6 + Math.min(0.8, c.s * 0.08);
             this.flying.push({ m, sk, l: this.defaultLife(m), s: ri(256), x: xx, y: yy, vx: Math.cos(b) * v, vy: Math.sin(b) * v, wt: 1, zg: 360 });
+            this.sfx.spat++;
           }
         }
       }
@@ -906,7 +931,7 @@
         let gone = false;
         for (const b of H.bhC) {
           const d = Math.hypot(b.x - c.x, b.y - c.y); if (d > b.R * 0.85) continue;
-          if (d < b.r + 2.5) { c.dead = 'void'; if (c.k !== M.STICKMAN) this.swallowed(c.k, 0xFFFF); gone = true; break; }
+          if (d < b.r + 2.5) { c.dead = 'void'; if (c.k === M.COW) this.tally.cows++; if (c.k !== M.STICKMAN) this.swallowed(c.k, 0xFFFF); gone = true; break; }
           move(b.x, b.y, d, Math.min(1.4 + b.s * 0.3, 14 * b.s / (d - b.r + 6)));
         }
         if (gone) continue;
@@ -918,6 +943,7 @@
     /* A gravity bomb goes off: no crater, just a huge push that flings everything loose outwards. */
     gravPush(cx, cy) {
       const w = this.w, h = this.h, t = this.t; let power = 1;
+      this.tally.grav++;
       for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { // nearby bombs join in
         const x = cx + dx, y = cy + dy; if (x < 0 || y < 0 || x >= w || y >= h) continue;
         const j = y * w + x; if (t[j] === M.GRAVBOMB) { t[j] = 0; power += 0.12; }
@@ -1016,6 +1042,7 @@
         N[b] = n;
       }
       T.set(N);
+      { let lo = 1e9, hi = -1e9; for (let b = 0; b < T.length; b++) { const v = T[b]; if (v < lo) lo = v; if (v > hi) hi = v; } this.tempLo = lo; this.tempHi = hi; }
       // Reactions to heat and cold.
       const life = this.life, heat = this.heat;
       for (let y = 0; y < h; y++) {
@@ -1045,7 +1072,8 @@
       for (const c of this.creatures) {
         if (c.dead || c.k === M.STICKMAN && c.s === 9) continue;
         const bx = Math.max(0, Math.min(tw - 1, (c.x / TB) | 0)), byy = Math.max(0, Math.min(th - 1, (c.y / TB) | 0));
-        if (T[byy * tw + bx] > 300 && rnd() < 0.15 && !(ABIL[c.k] && ABIL[c.k].fireproof)) this.hurtCreatures(c.x, c.y, 1, 'burn');
+        if (c.k === M.FIREFLY || c.k === M.DRAGON || (ABIL[c.k] && (ABIL[c.k].fireproof || ABIL[c.k].breath))) continue; // creatures of fire don't mind the heat
+        if (T[byy * tw + bx] > 420 && rnd() < 0.08) this.hurtCreatures(c.x, c.y, 1, 'burn');
       }
     }
     tempAt(x, y) { const bx = Math.max(0, Math.min(this.tw - 1, (x / TB) | 0)), by = Math.max(0, Math.min(this.th - 1, (y / TB) | 0)); return this.temp[by * this.tw + bx]; }
@@ -1071,6 +1099,7 @@
         this.magnets = mg; this.hasSticky = sticky;
         // Each separate black (or white) hole is one body: the bigger it is, the stronger and farther it pulls.
         H.bhC = H.bhN ? this.clusters(M.BLACKHOLE) : []; H.whC = H.whN ? this.clusters(M.WHITEHOLE) : [];
+        if (H.bhC.length && H.bhC[0].n > this.tally.bhMax) this.tally.bhMax = H.bhC[0].n; if (H.whC.length && H.whC[0].n > this.tally.whMax) this.tally.whMax = H.whC[0].n;
         this.holes = H.bhN || H.whN || H.vacN ? H : null; this.portOut = outs;
       }
       this.blastsNow = 0;
@@ -1142,6 +1171,7 @@
         if (rnd() >= r.p) continue;
         let ta = r.a;
         if (r.alt && rnd() < r.alt.p) ta = r.alt.a;
+        this.tally.rx++; this.tally.rxBy[m] = (this.tally.rxBy[m] || 0) + 1;
         if (r.b !== KEEP) { if (r.b === 0) this.t[j] = 0; else this.put(j, r.b); this.stamp[j] = this.clock; }
         if (m === M.ACID && r.b === 0 && rnd() < 0.35) ta = 0; // acid gets used up
         if (ta !== KEEP) { if (ta === 0) this.t[i] = 0; else this.put(i, ta); return true; }
@@ -1167,7 +1197,7 @@
         }
       }
       const below = i + this.w;
-      if (this.yields(m, below)) { this.swap(i, below); return; }
+      if (this.yields(m, below)) { this.swap(i, below); this.tally.fell++; return; }
       if (rnd() > SLIP[m]) return;
       const dir = rnd() < 0.5 ? -1 : 1;
       for (let s = 0; s < 2; s++) {
@@ -1322,7 +1352,7 @@
       if (rnd() < 0.0003) { t[i] = 0; return; } // clouds slowly thin out
       if (y < h - 1 && t[i + w] === 0 && rnd() < (storm ? 0.012 : 0.004)) {
         const cold = y < h * 0.15 && rnd() < 0.3; // high clouds are cold enough to snow
-        this.put(i + w, cold ? M.SNOW : M.WATER);
+        this.put(i + w, cold ? M.SNOW : M.WATER); this.tally.rain++;
         this.stamp[i + w] = this.clock;
         if (this.life[i]-- <= 1) { t[i] = 0; return; }
       }
@@ -1888,6 +1918,7 @@
         this.stickHome = { x, y };
       }
       const c = { k, x, y, vx: 0, vy: 0, dir: rnd() < 0.5 ? -1 : 1, s: 0, t: 30 + ri(90), a: 0, f: ri(1000), p: ri(90) };
+      this.sfx.born++; this.tally.species[k] = (this.tally.species[k] || 0) + 1;
       this.creatures.push(c);
       if (discover !== false && !this.discovered[k]) { this.discovered[k] = 1; if (this.onDiscover) this.onDiscover(k); }
       return c;
@@ -1917,6 +1948,17 @@
       return best;
     }
     stepCreatures() {
+      { // how far everything moved since last frame (for the stats), split into walking, flying and swimming
+        const T = this.tally;
+        for (const c of this.creatures) {
+          if (c.lx !== undefined) {
+            const d = Math.min(3, Math.abs(c.x - c.lx) + Math.abs(c.y - c.ly)), mv = MATS[c.k].move;
+            if (c.k === M.STICKMAN) T.stickDist += Math.min(2, Math.abs(c.x - c.lx));
+            else if (FLYMOVE[mv]) T.flyDist += d; else if (SWIMMOVE[mv]) T.swimDist += d; else T.steps += Math.min(2, Math.abs(c.x - c.lx));
+          }
+          c.lx = c.x; c.ly = c.y;
+        }
+      }
       const list = this.creatures;
       for (let n = 0; n < list.length; n++) {
         const c = list[n];
@@ -1991,6 +2033,8 @@
         this.creatures = list.filter((c) => {
           if (!c.dead) return true;
           if (c.k === M.STICKMAN) { this.knockOut(c, c.dead); c.dead = undefined; return true; } // he always comes back
+          if (c.dead === 'hatched') this.sfx.hatched++; else { this.sfx.lost++; this.tally.deaths[c.dead] = (this.tally.deaths[c.dead] || 0) + 1; }
+          if ((c.age || 0) > this.tally.oldest) this.tally.oldest = c.age;
           // Explosive creatures go off when they burn, get blown up, or their fuse runs out.
           if (ABIL[c.k] && ABIL[c.k].explodes && (c.dead === 'burn' || c.dead === 'boom')) { booms.push(Math.round(c.x), Math.round(c.y) - 1); return false; }
           if (c.dead === 'burn') { const x = Math.round(c.x), y = Math.round(c.y) - 1; if (x >= 0 && y >= 0 && x < this.w && y < this.h && this.t[y * this.w + x] === 0) this.put(y * this.w + x, M.SMOKE); }
@@ -2168,7 +2212,7 @@
     eat(c, list, prey, reach) {
       if (c.full) { c.full--; return; } // still full from the last catch
       if (c.f & 3) return;
-      for (const o of list) if (prey[o.k] && !o.dead && Math.abs(o.x - c.x) < reach && Math.abs(o.y - c.y) < reach) { o.dead = 'eaten'; c.full = 200; break; }
+      for (const o of list) if (prey[o.k] && !o.dead && Math.abs(o.x - c.x) < reach && Math.abs(o.y - c.y) < reach) { o.dead = 'eaten'; c.full = 200; if (prey === BUGS) this.tally.bugs++; break; }
     }
     nibble(c) { // snails eat a bit of plant or moss right in front of them
       const x = Math.round(c.x + c.dir), y = Math.round(c.y);
@@ -2390,7 +2434,7 @@
         }
       }
       // Grows up into something else.
-      if (A.grows && c.k === M.TADPOLE && c.age > A.grows[1]) this.morph(c, A.grows[0]);
+      if (A.grows && c.k === M.TADPOLE && c.age > A.grows[1]) { this.morph(c, A.grows[0]); this.tally.frogs++; }
     }
     // Run from scary creatures and from fire.
     flee(c, list) {
@@ -2582,7 +2626,7 @@
       const want = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
       if (want) c.dir = want;
       c.vx += (want * (wet ? 0.3 : 0.55) - c.vx) * (ground ? 0.35 : c.pz ? 0.02 : 0.12); // out of a portal he keeps his momentum
-      if (keys.jump && ground && !wet && c.vy >= 0) c.vy = -1.55;
+      if (keys.jump && ground && !wet && c.vy >= 0) { c.vy = -1.55; this.tally.jumps++; }
       else if (keys.jump && wet) c.vy = Math.max(c.vy - 0.12, -0.6);
       if (wet) { c.vy = Math.min(c.vy + 0.03, 0.5) * 0.92; c.pz = 0; } else if (this.zeroG) c.vy *= 0.995; else if (!(ground && c.vy === 0)) c.vy = Math.min(c.vy + 0.12, c.pz ? 9 : 2.6);
       if (here === M.QUICKSAND) { // wading through it is slow, and he sinks unless he keeps jumping
@@ -2619,6 +2663,7 @@
     }
     knockOut(c, how) {
       if (c.s === 9) return;
+      this.tally.kos++; if (how === 'fall') this.tally.falls++;
       c.s = 9; c.ko = 70; c.vx = c.vy = 0;
       if (how === 'burn' || how === 'boom') { const x = Math.round(c.x), y = Math.round(c.y) - 3; if (x >= 0 && y >= 0 && x < this.w && y < this.h && this.t[y * this.w + x] === 0) this.put(y * this.w + x, M.SMOKE); }
       if (how === 'void') c.ko = 40;
