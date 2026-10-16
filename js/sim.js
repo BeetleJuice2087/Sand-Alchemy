@@ -6,7 +6,7 @@
    ========================================================================== */
 (function () {
   'use strict';
-  const { M, MATS, COUNT, RX, KEEP, IGNITERS, MAGIC } = window.SandMats;
+  const { M, MATS, COUNT, RX, rxOf, KEEP, IGNITERS, magic } = window.SandMats;
   const TRUNK = 200; // fuel tag on wood that is still growing into a tree
 
   // Fast, small random number generator (xorshift32).
@@ -25,7 +25,7 @@
   });
   for (let a = 0; a < COUNT; a++) {
     if (IGNITERS.has(a)) REACTIVE[a] = 1;
-    for (let b = 0; b < COUNT; b++) if (RX[a * COUNT + b]) REACTIVE[a] = 1;
+    if (RX[a] && RX[a].some(Boolean)) REACTIVE[a] = 1;
   }
 
   // Creature lookups: what they can move through, swim in, dig through, and what kills them.
@@ -129,7 +129,8 @@
     LIKE[id] = m.like || 0;
     KIND[id] = K[m.kind] || 0; DENS[id] = m.density; SLIP[id] = m.slip; FLAM[id] = m.flam; BURN[id] = m.burn; SPREAD[id] = m.spread || 0;
     REACTIVE[id] = IGNITERS.has(id) ? 1 : 0;
-    for (let b = 0; b < COUNT; b++) { if (RX[id * COUNT + b]) REACTIVE[id] = 1; if (RX[b * COUNT + id]) REACTIVE[b] = 1; }
+    if (RX[id] && RX[id].some(Boolean)) REACTIVE[id] = 1;
+    for (let b = 0; b < RX.length; b++) if (RX[b] && RX[b][id]) REACTIVE[b] = 1;
     const k = KIND[id]; OPEN[id] = (k === K.gas || k === K.cloud || k === K.float || k === K.spark) ? 1 : 0;
     if (IGNITERS.has(id)) { FIERY[id] = 1; HOT[id] = 1; }
     if (m.props && m.props.hot) DEADLY[id] = 1;
@@ -1164,7 +1165,7 @@
       if (xx < 0 || yy < 0 || xx >= this.w || yy >= this.h) return false;
       const j = yy * this.w + xx, b = this.t[j];
       if (IGNITERS.has(m) && FLAM[b] > 0 && rnd() < FLAM[b]) { this.ignite(j); return false; }
-      const list = RX[m * COUNT + b];
+      const row = RX[m], list = row && row[b];
       if (!list) return false;
       for (let k = 0; k < list.length; k++) {
         const r = list[k];
@@ -1826,7 +1827,7 @@
       if (bx < 0 || by < 0 || bx >= w || by >= h) return;
       const b = by * w + bx, B = t[b];
       if (!B || b === a || B === A) return;
-      const out = MAGIC[A * COUNT + B];
+      const out = magic(A, B);
       if (!out) return;
       this.put(a, out); this.stamp[a] = this.clock;
       t[b] = 0;
@@ -3040,5 +3041,5 @@
     }
   }
 
-  window.SandSim = { LIKE, World, rnd, ri, KIND, K, MAX_CREATURES, refresh, TB, ROOM };
+  window.SandSim = { FILES: 63, LIKE, World, rnd, ri, KIND, K, MAX_CREATURES, refresh, TB, ROOM };
 })();

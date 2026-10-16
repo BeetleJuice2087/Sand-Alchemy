@@ -59,7 +59,7 @@
   // Ids from BUILTIN up to EXTRA-1, and from SLOTS2 up to COUNT-1, are kept free for things the AI
   // invents. The grid stores ids in 16 bits, so there's plenty of room: the third wave of built-ins
   // lives at 254..319 and the second block of invention slots starts at 320.
-  const BUILTIN = 109, EXTRA = 225, SLOTS2 = 320, COUNT = 1024; // 820 invention slots
+  const BUILTIN = 109, EXTRA = 225, SLOTS2 = 320, COUNT = 4096; // 3,892 invention slots
   const isSlot = (id) => (id >= BUILTIN && id < EXTRA) || (id >= SLOTS2 && id < COUNT);
 
   /* kind: how it moves.  density: heavier things sink through lighter
@@ -713,8 +713,11 @@
     props: { glow: [255, 130, 70] } });
 
   /* Cauldron recipes: unordered pairs of ingredients. */
-  const MAGIC = new Uint16Array(COUNT * COUNT);
-  function brew(a, b, out) { MAGIC[a * COUNT + b] = out; MAGIC[b * COUNT + a] = out; }
+  // Recipes: what two things brew into. Kept in a Map (key a * COUNT + b) so thousands of inventions don't need a giant table.
+  const MAGIC = new Map();
+  const magic = (a, b) => MAGIC.get(a * COUNT + b) || 0;
+  function setMagic(a, b, out) { if (out) { MAGIC.set(a * COUNT + b, out); MAGIC.set(b * COUNT + a, out); } else { MAGIC.delete(a * COUNT + b); MAGIC.delete(b * COUNT + a); } }
+  function brew(a, b, out) { setMagic(a, b, out); }
   brew(M.PLANT, M.WATER, M.ESSENCE);
   brew(M.WATER, M.CRYSTAL, M.RAINBOW);
   brew(M.SALT, M.CRYSTAL, M.STARDUST);
@@ -937,11 +940,13 @@
      B becomes `b` (-1 = unchanged). `alt` swaps A's result for another
      material a small share of the time. */
   const KEEP = -1;
-  const RX = new Array(COUNT * COUNT);
+  // RX[a][b] = the list of reactions when A meets B (rows only for things that react).
+  const RX = new Array(COUNT);
   function rx(a, b, p, ta, tb, alt) {
-    const k = a * COUNT + b;
-    (RX[k] || (RX[k] = [])).push({ p, a: ta, b: tb, alt });
+    const row = RX[a] || (RX[a] = []);
+    (row[b] || (row[b] = [])).push({ p, a: ta, b: tb, alt });
   }
+  const rxOf = (a, b) => { const row = RX[a]; return row ? row[b] : undefined; };
   const E = M.EMPTY;
 
   // Water and heat
@@ -1067,5 +1072,5 @@
     return m;
   }
 
-  window.SandMats = { M, MATS, COUNT, BUILTIN, EXTRA, SLOTS2, isSlot, RX, KEEP, IGNITERS, MAGIC, traitMix, hex, invent };
+  window.SandMats = { FILES: 63, M, MATS, COUNT, BUILTIN, EXTRA, SLOTS2, isSlot, RX, rxOf, KEEP, IGNITERS, MAGIC, magic, setMagic, traitMix, hex, invent };
 })();

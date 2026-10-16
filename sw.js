@@ -3,7 +3,8 @@
    away when online), falling back to the saved copy when offline. Fonts come
    from the saved copy and refresh in the background. Everything else (the AI
    Worker, the on-device AI download) is left alone. */
-const CACHE = 'sandalchemy-v4';
+const CACHE = 'sandalchemy-v5';
+const offline = new Set(); // pages that opened from the saved copy
 const APP_FILES = ['./', 'index.html', 'css/styles.css', 'js/materials.js', 'js/sim.js', 'js/game.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png'];
 
@@ -36,13 +37,28 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   const saved = async () => (await caches.match(req, { ignoreSearch: true })) ||
     (req.mode === 'navigate' ? (await caches.match('index.html')) || (await caches.match('./')) : null);
+  // A page that opened from the saved copy loads all its files from the saved copy too,
+  // so every piece of the game comes from the same version.
+  if (req.mode !== 'navigate' && offline.has(event.clientId)) {
+    event.respondWith(saved().then((hit) => hit || fetch(req)));
+    return;
+  }
   const net = fetch(req, { cache: 'no-cache' }) // always ask GitHub whether there's a newer copy
     .then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
       return res;
     });
-  // If GitHub hasn't answered in 4 seconds (Wi-Fi connected but the internet is down), use the saved copy.
-  // The download keeps going in the background, so the saved copy is still updated if it gets through.
-  const slow = new Promise((r) => setTimeout(r, 4000)).then(async () => (await saved()) || net);
-  event.respondWith(Promise.race([net, slow]).catch(async () => (await saved()) || Response.error()));
+  const useSaved = async () => {
+    const hit = await saved();
+    if (hit && req.mode === 'navigate' && event.resultingClientId) offline.add(event.resultingClientId);
+    return hit;
+  };
+  if (req.mode === 'navigate') {
+    // Only the page itself waits at most 4 seconds (Wi-Fi connected but the internet is down).
+    // Its files then come from the same place the page did.
+    const slow = new Promise((r) => setTimeout(r, 4000)).then(async () => (await useSaved()) || net);
+    event.respondWith(Promise.race([net, slow]).catch(async () => (await useSaved()) || Response.error()));
+  } else {
+    event.respondWith(net.catch(async () => (await saved()) || Response.error()));
+  }
 });

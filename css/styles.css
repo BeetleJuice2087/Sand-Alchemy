@@ -368,6 +368,8 @@ html, body { overflow-x: hidden; }
 .sp-jump { width: 70px; height: 70px; font-size: 28px; }
 
 /* Favorites */
+.palette .recent-box { display: contents; }
+.grp.recent { color: #8fd3ff; background: color-mix(in srgb, #8fd3ff 12%, transparent); }
 .grp.fav { color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); }
 .mat.is-fav::before { content: '\2605'; position: absolute; top: 2px; left: 5px; font-size: 10px; line-height: 1; color: var(--gold); }
 .mat { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
